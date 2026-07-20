@@ -1,6 +1,9 @@
-venv/
 __pycache__/
 *.pyc
+poker.db
+.venv/
+venv/
 .git/
 .gitignore
-poker.db
+README.md
+*.md

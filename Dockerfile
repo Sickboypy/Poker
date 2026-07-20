@@ -1,14 +1,16 @@
 FROM python:3.12-slim
 
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
 WORKDIR /app
 
 COPY requirements.txt .
-
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY static ./static
 
-EXPOSE 8080
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Cloud Run inyecta el puerto en $PORT (por defecto 8080)
+ENV PORT=8080
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}

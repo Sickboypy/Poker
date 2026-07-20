@@ -3,34 +3,30 @@ from datetime import datetime, timezone
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.orm import Session, joinedload
 
 from . import schemas
 from .auth import (
     get_current_user,
-    get_db,
+    get_store,
     hash_password,
     new_token,
     verify_password,
 )
-from .database import Base, engine
-from .models import BuyIn, Game, GameParticipant, Session as SessionModel, User
+from .store import Store
 
-Base.metadata.create_all(bind=engine)
-
-app = FastAPI(title="Poker pobre 98!")
+app = FastAPI(title="Mesa Final")
 
 
 GAME_TYPES = {
     "knockout": {
-        "label": "Poker Highlander",
+        "label": "Eliminación directa",
         "description": "Se juega hasta que queda un solo jugador en pie.",
         "min_players": 2,
         "available": True,
     },
     "cash": {
-        "label": "Poker tradicional",
-        "description": "Póquer tradicional, cada uno se retira cuando quiere.",
+        "label": "Cash game",
+        "description": "Póquer tradicional con balance por sesión.",
         "min_players": 2,
         "available": False,
     },
@@ -41,67 +37,62 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
+def _sorted_game(game):
+    game.participants.sort(
+        key=lambda p: (p.position is not None, p.position or 0, p.user.username.lower())
+    )
+    game.buyins.sort(key=lambda b: b.requested_at, reverse=True)
+    return game
+
+
 # ============================================================
 # Auth
 # ============================================================
 
-def _set_session(response: Response, db: Session, user: User) -> None:
+def _set_session(response: Response, store: Store, user) -> None:
     token = new_token()
-    db.add(SessionModel(token=token, user_id=user.id))
-    db.commit()
+    store.create_session(token, user.id)
     response.set_cookie(
-        "mf_token",
-        token,
-        httponly=True,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 90,  # 90 dias
+        "mf_token", token, httponly=True, samesite="lax",
+        secure=True, max_age=60 * 60 * 24 * 90,
     )
 
 
 @app.post("/api/auth/register", response_model=schemas.UserOut)
-def register(payload: schemas.RegisterIn, response: Response, db: Session = Depends(get_db)):
+def register(payload: schemas.RegisterIn, response: Response, store: Store = Depends(get_store)):
     username = payload.username.strip()
     if not username:
         raise HTTPException(400, "El nombre de usuario no puede estar vacío")
 
-    exists = db.query(User).filter(User.username.ilike(username)).first()
-    if exists:
-        raise HTTPException(400, f"El usuario «{username}» ya existe")
-
-    user = User(
+    user = store.create_user(
         username=username,
         password_hash=hash_password(payload.password),
         emoji=payload.emoji or "🂡",
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    _set_session(response, db, user)
+    if user is None:
+        raise HTTPException(400, f"El usuario «{username}» ya existe")
+
+    _set_session(response, store, user)
     return user
 
 
 @app.post("/api/auth/login", response_model=schemas.UserOut)
-def login(payload: schemas.LoginIn, response: Response, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username.ilike(payload.username.strip())).first()
+def login(payload: schemas.LoginIn, response: Response, store: Store = Depends(get_store)):
+    user = store.get_user_by_username(payload.username.strip())
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(401, "Usuario o contraseña incorrectos")
-    _set_session(response, db, user)
+    _set_session(response, store, user)
     return user
 
 
 @app.post("/api/auth/logout", status_code=204)
-def logout(
-    response: Response,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    db.query(SessionModel).filter(SessionModel.user_id == user.id).delete()
-    db.commit()
+def logout(response: Response, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    store.delete_user_sessions(user.id)
     response.delete_cookie("mf_token")
 
 
 @app.get("/api/auth/me", response_model=schemas.UserOut)
-def me(user: User = Depends(get_current_user)):
+def me(user=Depends(get_current_user)):
     return user
 
 
@@ -110,7 +101,7 @@ def me(user: User = Depends(get_current_user)):
 # ============================================================
 
 @app.get("/api/game-types")
-def list_game_types(user: User = Depends(get_current_user)):
+def list_game_types(user=Depends(get_current_user)):
     return [{"id": k, **v} for k, v in GAME_TYPES.items()]
 
 
@@ -118,372 +109,251 @@ def list_game_types(user: User = Depends(get_current_user)):
 # Partidas
 # ============================================================
 
-def _load_game(db: Session, game_id: int) -> Game:
-    game = (
-        db.query(Game)
-        .options(
-            joinedload(Game.participants).joinedload(GameParticipant.user),
-            joinedload(Game.buyins).joinedload(BuyIn.user),
-            joinedload(Game.admin),
-            joinedload(Game.winner),
-        )
-        .filter(Game.id == game_id)
-        .first()
-    )
+def _load_game(store: Store, game_id: int):
+    game = store.get_game(game_id)
     if not game:
         raise HTTPException(404, "Partida no encontrada")
     return game
 
 
-def _sorted_game(game: Game) -> Game:
-    game.participants.sort(
-        key=lambda p: (
-            p.position is not None,
-            p.position or 0,
-            p.user.username.lower(),
-        )
-    )
-    game.buyins.sort(key=lambda b: b.requested_at, reverse=True)
-    return game
-
-
-def _require_admin(game: Game, user: User):
+def _require_admin(game, user):
     if game.admin_id != user.id:
         raise HTTPException(403, "Solo el administrador de la partida puede hacer esto")
 
 
-def _participant_of(game: Game, user_id: int) -> GameParticipant | None:
-    return next((p for p in game.participants if p.user_id == user_id), None)
+def _run(store: Store, game_id: int, mutator):
+    """Ejecuta una mutación transaccional y traduce errores a HTTPException."""
+    try:
+        return _sorted_game(store.update_game(game_id, mutator))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        if str(e) == "__forbidden__":
+            raise HTTPException(403, "Solo el administrador de la partida puede hacer esto")
+        raise HTTPException(400, str(e))
 
 
 @app.get("/api/games", response_model=list[schemas.GameOut])
-def list_games(
-    status: str | None = None,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    q = (
-        db.query(Game)
-        .options(
-            joinedload(Game.participants).joinedload(GameParticipant.user),
-            joinedload(Game.buyins).joinedload(BuyIn.user),
-            joinedload(Game.admin),
-            joinedload(Game.winner),
-        )
-        .order_by(Game.created_at.desc())
-    )
-    if status:
-        q = q.filter(Game.status.in_(status.split(",")))
-    return [_sorted_game(g) for g in q.all()]
+def list_games(status: str | None = None, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    statuses = status.split(",") if status else None
+    return [_sorted_game(g) for g in store.list_games(statuses)]
 
 
 @app.get("/api/games/{game_id}", response_model=schemas.GameOut)
-def get_game(
-    game_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    return _sorted_game(_load_game(db, game_id))
+def get_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    return _sorted_game(_load_game(store, game_id))
 
 
 @app.post("/api/games", response_model=schemas.GameOut, status_code=201)
-def create_game(
-    payload: schemas.GameCreate,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
+def create_game(payload: schemas.GameCreate, store: Store = Depends(get_store), user=Depends(get_current_user)):
     gtype = GAME_TYPES.get(payload.game_type)
     if not gtype:
         raise HTTPException(400, f"Tipo de juego desconocido: {payload.game_type}")
     if not gtype["available"]:
         raise HTTPException(400, f"El modo «{gtype['label']}» todavía no está disponible")
 
-    active = db.query(Game).filter(Game.status.in_(["open", "in_progress"])).first()
-    if active:
-        raise HTTPException(
-            400,
-            f"Ya hay una partida activa (#{active.id}). Terminala o cancelala primero.",
-        )
+    if store.find_active_game():
+        raise HTTPException(400, "Ya hay una partida activa. Terminala o cancelala primero.")
 
-    game = Game(
-        game_type=payload.game_type,
-        status="open",
-        admin_id=user.id,
-        buy_in_amount=payload.buy_in_amount,
-    )
-    db.add(game)
-    db.flush()
-
-    # El creador queda anotado automaticamente
-    db.add(GameParticipant(game_id=game.id, user_id=user.id))
-    db.commit()
-    return _sorted_game(_load_game(db, game.id))
+    game = store.create_game(payload.game_type, user, payload.buy_in_amount)
+    return _sorted_game(game)
 
 
 @app.post("/api/games/{game_id}/join", response_model=schemas.GameOut)
-def join_game(
-    game_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = _load_game(db, game_id)
-    if game.status != "open":
-        raise HTTPException(400, "La partida ya arrancó, no se puede entrar")
-    if _participant_of(game, user.id):
-        raise HTTPException(400, "Ya estás anotado en esta partida")
-
-    db.add(GameParticipant(game_id=game.id, user_id=user.id))
-    db.commit()
-    return _sorted_game(_load_game(db, game_id))
+def join_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    def mut(g):
+        if g["status"] != "open":
+            return "La partida ya arrancó, no se puede entrar"
+        if any(p["user_id"] == user.id for p in g["participants"]):
+            return "Ya estás anotado en esta partida"
+        g["participants"].append({
+            "user": {"id": user.id, "username": user.username, "emoji": user.emoji},
+            "user_id": user.id, "position": None, "eliminated_at": None,
+            "exit_requested": False, "joined_at": utcnow(),
+        })
+    return _run(store, game_id, mut)
 
 
 @app.post("/api/games/{game_id}/unjoin", response_model=schemas.GameOut)
-def unjoin_game(
-    game_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = _load_game(db, game_id)
-    if game.status != "open":
-        raise HTTPException(400, "La partida ya arrancó")
-    if game.admin_id == user.id:
-        raise HTTPException(400, "El administrador no puede bajarse: cancelá la partida")
-
-    part = _participant_of(game, user.id)
-    if not part:
-        raise HTTPException(400, "No estás anotado en esta partida")
-
-    db.delete(part)
-    db.query(BuyIn).filter(
-        BuyIn.game_id == game_id, BuyIn.user_id == user.id
-    ).delete()
-    db.commit()
-    return _sorted_game(_load_game(db, game_id))
+def unjoin_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    def mut(g):
+        if g["status"] != "open":
+            return "La partida ya arrancó"
+        if g["admin_id"] == user.id:
+            return "El administrador no puede bajarse: cancelá la partida"
+        if not any(p["user_id"] == user.id for p in g["participants"]):
+            return "No estás anotado en esta partida"
+        g["participants"] = [p for p in g["participants"] if p["user_id"] != user.id]
+        g["buyins"] = [b for b in g["buyins"] if b["user_id"] != user.id]
+    return _run(store, game_id, mut)
 
 
 @app.post("/api/games/{game_id}/start", response_model=schemas.GameOut)
-def start_game(
-    game_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = _load_game(db, game_id)
-    _require_admin(game, user)
-    if game.status != "open":
-        raise HTTPException(400, "La partida ya arrancó")
-
-    min_players = GAME_TYPES[game.game_type]["min_players"]
-    if len(game.participants) < min_players:
-        raise HTTPException(400, f"Se necesitan al menos {min_players} jugadores")
-
-    game.status = "in_progress"
-    game.started_at = utcnow()
-    db.commit()
-    return _sorted_game(_load_game(db, game_id))
+def start_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    def mut(g):
+        if g["admin_id"] != user.id:
+            return "__forbidden__"
+        if g["status"] != "open":
+            return "La partida ya arrancó"
+        if len(g["participants"]) < GAME_TYPES[g["game_type"]]["min_players"]:
+            return "Se necesitan al menos 2 jugadores"
+        g["status"] = "in_progress"
+        g["started_at"] = utcnow()
+    return _run(store, game_id, mut)
 
 
 # ---------------- Cajas (buy-ins) ----------------
 
 @app.post("/api/games/{game_id}/buyins", response_model=schemas.GameOut, status_code=201)
-def request_buyin(
-    game_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = _load_game(db, game_id)
-    if game.status not in ("open", "in_progress"):
-        raise HTTPException(400, "La partida ya terminó")
+def request_buyin(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    def mut(g):
+        if g["status"] not in ("open", "in_progress"):
+            return "La partida ya terminó"
+        part = next((p for p in g["participants"] if p["user_id"] == user.id), None)
+        if not part:
+            return "No estás en esta partida"
+        if part["position"] is not None:
+            return "Ya saliste de la partida, no podés pedir caja"
+        if any(b["user_id"] == user.id and b["status"] == "pending" for b in g["buyins"]):
+            return "Ya tenés una caja pendiente de aprobación"
+        next_id = max([b["id"] for b in g["buyins"]], default=0) + 1
+        g["buyins"].append({
+            "id": next_id,
+            "user": {"id": user.id, "username": user.username, "emoji": user.emoji},
+            "user_id": user.id, "status": "pending",
+            "requested_at": utcnow(), "resolved_at": None,
+        })
+    return _run(store, game_id, mut)
 
-    part = _participant_of(game, user.id)
-    if not part:
-        raise HTTPException(400, "No estás en esta partida")
-    if part.position is not None:
-        raise HTTPException(400, "Ya saliste de la partida, no podés pedir caja")
 
-    pending = any(
-        b.user_id == user.id and b.status == "pending" for b in game.buyins
-    )
-    if pending:
-        raise HTTPException(400, "Ya tenés una caja pendiente de aprobación")
-
-    db.add(BuyIn(game_id=game.id, user_id=user.id))
-    db.commit()
-    return _sorted_game(_load_game(db, game_id))
+def _resolve_buyin(store, game_id, buyin_id, user, new_status):
+    def mut(g):
+        if g["admin_id"] != user.id:
+            return "__forbidden__"
+        b = next((x for x in g["buyins"] if x["id"] == buyin_id), None)
+        if not b:
+            return "__notfound__"
+        if b["status"] != "pending":
+            return "Esa caja ya fue resuelta"
+        b["status"] = new_status
+        b["resolved_at"] = utcnow()
+    try:
+        return _sorted_game(store.update_game(game_id, mut))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        if str(e) == "__notfound__":
+            raise HTTPException(404, "Caja no encontrada")
+        if str(e) == "__forbidden__":
+            raise HTTPException(403, "Solo el administrador de la partida puede hacer esto")
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/games/{game_id}/buyins/{buyin_id}/approve", response_model=schemas.GameOut)
-def approve_buyin(
-    game_id: int,
-    buyin_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = _load_game(db, game_id)
-    _require_admin(game, user)
-
-    buyin = next((b for b in game.buyins if b.id == buyin_id), None)
-    if not buyin:
-        raise HTTPException(404, "Caja no encontrada")
-    if buyin.status != "pending":
-        raise HTTPException(400, "Esa caja ya fue resuelta")
-
-    buyin.status = "approved"
-    buyin.resolved_at = utcnow()
-    db.commit()
-    return _sorted_game(_load_game(db, game_id))
+def approve_buyin(game_id: int, buyin_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    return _resolve_buyin(store, game_id, buyin_id, user, "approved")
 
 
 @app.post("/api/games/{game_id}/buyins/{buyin_id}/reject", response_model=schemas.GameOut)
-def reject_buyin(
-    game_id: int,
-    buyin_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = _load_game(db, game_id)
-    _require_admin(game, user)
-
-    buyin = next((b for b in game.buyins if b.id == buyin_id), None)
-    if not buyin:
-        raise HTTPException(404, "Caja no encontrada")
-    if buyin.status != "pending":
-        raise HTTPException(400, "Esa caja ya fue resuelta")
-
-    buyin.status = "rejected"
-    buyin.resolved_at = utcnow()
-    db.commit()
-    return _sorted_game(_load_game(db, game_id))
+def reject_buyin(game_id: int, buyin_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    return _resolve_buyin(store, game_id, buyin_id, user, "rejected")
 
 
 # ---------------- Retiros y eliminaciones ----------------
 
 @app.post("/api/games/{game_id}/exit-request", response_model=schemas.GameOut)
-def request_exit(
-    game_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = _load_game(db, game_id)
-    if game.status != "in_progress":
-        raise HTTPException(400, "La partida no está en curso")
-
-    part = _participant_of(game, user.id)
-    if not part:
-        raise HTTPException(400, "No estás en esta partida")
-    if part.position is not None:
-        raise HTTPException(400, "Ya saliste de la partida")
-    if part.exit_requested:
-        raise HTTPException(400, "Ya pediste retirarte; esperá al administrador")
-
-    part.exit_requested = True
-    db.commit()
-    return _sorted_game(_load_game(db, game_id))
+def request_exit(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    def mut(g):
+        if g["status"] != "in_progress":
+            return "La partida no está en curso"
+        part = next((p for p in g["participants"] if p["user_id"] == user.id), None)
+        if not part:
+            return "No estás en esta partida"
+        if part["position"] is not None:
+            return "Ya saliste de la partida"
+        if part["exit_requested"]:
+            return "Ya pediste retirarte; esperá al administrador"
+        part["exit_requested"] = True
+    return _run(store, game_id, mut)
 
 
 @app.post("/api/games/{game_id}/exit-request/cancel", response_model=schemas.GameOut)
-def cancel_exit(
-    game_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = _load_game(db, game_id)
-    part = _participant_of(game, user.id)
-    if not part or not part.exit_requested:
-        raise HTTPException(400, "No tenés un retiro pendiente")
-
-    part.exit_requested = False
-    db.commit()
-    return _sorted_game(_load_game(db, game_id))
+def cancel_exit(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    def mut(g):
+        part = next((p for p in g["participants"] if p["user_id"] == user.id), None)
+        if not part or not part["exit_requested"]:
+            return "No tenés un retiro pendiente"
+        part["exit_requested"] = False
+    return _run(store, game_id, mut)
 
 
 @app.post("/api/games/{game_id}/eliminate", response_model=schemas.GameOut)
-def eliminate(
-    game_id: int,
-    payload: schemas.EliminateIn,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = _load_game(db, game_id)
-    _require_admin(game, user)
-    if game.status != "in_progress":
-        raise HTTPException(400, "La partida no está en curso")
+def eliminate(game_id: int, payload: schemas.EliminateIn, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    def mut(g):
+        if g["admin_id"] != user.id:
+            return "__forbidden__"
+        if g["status"] != "in_progress":
+            return "La partida no está en curso"
+        part = next((p for p in g["participants"] if p["user_id"] == payload.user_id), None)
+        if not part:
+            return "Ese jugador no está en la partida"
+        if part["position"] is not None:
+            return "Ese jugador ya salió de la partida"
 
-    part = _participant_of(game, payload.user_id)
-    if not part:
-        raise HTTPException(400, "Ese jugador no está en la partida")
-    if part.position is not None:
-        raise HTTPException(400, "Ese jugador ya salió de la partida")
+        alive = [p for p in g["participants"] if p["position"] is None]
+        part["position"] = len(alive)
+        part["eliminated_at"] = utcnow()
+        part["exit_requested"] = False
 
-    alive = [p for p in game.participants if p.position is None]
-
-    part.position = len(alive)
-    part.eliminated_at = utcnow()
-    part.exit_requested = False
-
-    remaining = [p for p in alive if p.id != part.id]
-    if len(remaining) == 1:
-        champion = remaining[0]
-        champion.position = 1
-        champion.exit_requested = False
-        game.status = "finished"
-        game.finished_at = utcnow()
-        game.winner_id = champion.user_id
-
-    db.commit()
-    return _sorted_game(_load_game(db, game_id))
+        remaining = [p for p in alive if p["user_id"] != part["user_id"]]
+        if len(remaining) == 1:
+            champ = remaining[0]
+            champ["position"] = 1
+            champ["exit_requested"] = False
+            g["status"] = "finished"
+            g["finished_at"] = utcnow()
+            g["winner"] = dict(champ["user"])
+            g["winner_id"] = champ["user_id"]
+    return _run(store, game_id, mut)
 
 
 @app.post("/api/games/{game_id}/undo", response_model=schemas.GameOut)
-def undo_last(
-    game_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = _load_game(db, game_id)
-    _require_admin(game, user)
-    if game.status == "cancelled":
-        raise HTTPException(400, "La partida fue cancelada")
-
-    eliminated = [p for p in game.participants if p.eliminated_at is not None]
-    if not eliminated:
-        raise HTTPException(400, "No hay salidas para deshacer")
-
-    last = max(eliminated, key=lambda p: p.eliminated_at)
-
-    if game.status == "finished":
-        for p in game.participants:
-            if p.position == 1:
-                p.position = None
-        game.status = "in_progress"
-        game.finished_at = None
-        game.winner_id = None
-
-    last.position = None
-    last.eliminated_at = None
-
-    db.commit()
-    return _sorted_game(_load_game(db, game_id))
+def undo_last(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    def mut(g):
+        if g["admin_id"] != user.id:
+            return "__forbidden__"
+        if g["status"] == "cancelled":
+            return "La partida fue cancelada"
+        eliminated = [p for p in g["participants"] if p["eliminated_at"] is not None]
+        if not eliminated:
+            return "No hay salidas para deshacer"
+        last = max(eliminated, key=lambda p: p["eliminated_at"])
+        if g["status"] == "finished":
+            for p in g["participants"]:
+                if p["position"] == 1:
+                    p["position"] = None
+            g["status"] = "in_progress"
+            g["finished_at"] = None
+            g["winner"] = None
+            g["winner_id"] = None
+        last["position"] = None
+        last["eliminated_at"] = None
+    return _run(store, game_id, mut)
 
 
 @app.delete("/api/games/{game_id}", status_code=204)
-def cancel_or_delete_game(
-    game_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    game = db.get(Game, game_id)
-    if not game:
-        raise HTTPException(404, "Partida no encontrada")
+def cancel_or_delete_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    game = _load_game(store, game_id)
     if game.admin_id != user.id:
         raise HTTPException(403, "Solo el administrador de la partida puede hacer esto")
 
     if game.status in ("open", "in_progress"):
-        game.status = "cancelled"
-        game.finished_at = utcnow()
-        db.commit()
+        def mut(g):
+            g["status"] = "cancelled"
+            g["finished_at"] = utcnow()
+        store.update_game(game_id, mut)
     else:
-        db.delete(game)
-        db.commit()
+        store.delete_game(game_id)
 
 
 # ============================================================
@@ -491,28 +361,15 @@ def cancel_or_delete_game(
 # ============================================================
 
 @app.get("/api/stats", response_model=schemas.StatsOut)
-def get_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    finished = (
-        db.query(Game)
-        .options(
-            joinedload(Game.participants).joinedload(GameParticipant.user),
-            joinedload(Game.buyins),
-        )
-        .filter(Game.status == "finished")
-        .order_by(Game.finished_at.desc())
-        .all()
-    )
+def get_stats(store: Store = Depends(get_store), user=Depends(get_current_user)):
+    finished = [g for g in store.list_games(["finished"])]
+    finished.sort(key=lambda g: g.finished_at or g.created_at, reverse=True)
 
-    users = db.query(User).all()
+    users = store.list_users()
     by_user = {
         u.id: {
-            "user": u,
-            "games_played": 0,
-            "wins": 0,
-            "podiums": 0,
-            "positions": [],
-            "results": [],
-            "total_buyins": 0,
+            "user": u, "games_played": 0, "wins": 0, "podiums": 0,
+            "positions": [], "results": [], "total_buyins": 0,
         }
         for u in users
     }
@@ -545,27 +402,18 @@ def get_stats(db: Session = Depends(get_db), user: User = Depends(get_current_us
             else:
                 break
         gp = row["games_played"]
-        leaderboard.append(
-            schemas.PlayerStats(
-                user=schemas.UserOut.model_validate(row["user"]),
-                games_played=gp,
-                wins=row["wins"],
-                podiums=row["podiums"],
-                win_rate=round(row["wins"] / gp, 3) if gp else 0.0,
-                avg_position=(
-                    round(sum(row["positions"]) / len(row["positions"]), 2)
-                    if row["positions"]
-                    else None
-                ),
-                current_streak=streak,
-                total_buyins=row["total_buyins"],
-            )
-        )
+        leaderboard.append(schemas.PlayerStats(
+            user=schemas.UserOut(id=row["user"].id, username=row["user"].username, emoji=row["user"].emoji),
+            games_played=gp,
+            wins=row["wins"],
+            podiums=row["podiums"],
+            win_rate=round(row["wins"] / gp, 3) if gp else 0.0,
+            avg_position=round(sum(row["positions"]) / len(row["positions"]), 2) if row["positions"] else None,
+            current_streak=streak,
+            total_buyins=row["total_buyins"],
+        ))
 
-    leaderboard.sort(
-        key=lambda s: (-s.wins, -s.win_rate, s.avg_position or 99, s.user.username.lower())
-    )
-
+    leaderboard.sort(key=lambda s: (-s.wins, -s.win_rate, s.avg_position or 99, s.user.username.lower()))
     return schemas.StatsOut(leaderboard=leaderboard, total_games=len(finished))
 
 

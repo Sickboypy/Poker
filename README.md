@@ -51,5 +51,5 @@ static/        # Frontend (vanilla JS, mobile-first)
 1. Sumarlo al diccionario `GAME\_TYPES` en `app/main.py` con `available: True`
 2. Implementar su lógica de resultado (posiciones / balance / puntos)
 3. El frontend lo muestra automáticamente en "Modalidad"
-4. CI/CD test
+4. CI/CD test2
 

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1f16" />
+  <title>Poker Pobre!</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>♠️</text></svg>" />
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-suit">♠</span>
+      <span class="brand-name">Poker&nbsp;Pobre</span>
+    </div>
+    <div class="topbar-right">
+      <span id="me-chip" class="me-chip hidden"></span>
+      <button id="sound-toggle" class="icon-btn" title="Sonido" aria-label="Activar o silenciar sonido">🔊</button>
+    </div>
+  </header>
+
+  <!-- Pantalla de acceso -->
+  <div id="auth" class="auth hidden">
+    <div class="auth-card">
+      <div class="auth-logo">♠</div>
+      <h1 class="auth-title">Poker Pobre</h1>
+      <p class="auth-sub">La noche no termina hasta que queda uno.</p>
+
+      <div class="auth-tabs">
+        <button id="auth-tab-login" class="auth-tab active">Entrar</button>
+        <button id="auth-tab-register" class="auth-tab">Crear cuenta</button>
+      </div>
+
+      <div id="auth-emoji-wrap" class="hidden">
+        <div class="emoji-picker" id="auth-emojis"></div>
+      </div>
+
+      <input type="text" id="auth-user" placeholder="Nombre de usuario" maxlength="24" autocomplete="username" />
+      <input type="password" id="auth-pass" placeholder="Contraseña" maxlength="100" autocomplete="current-password" />
+
+      <button class="btn btn-gold" id="auth-submit">Entrar</button>
+      <p id="auth-error" class="auth-error hidden"></p>
+    </div>
+  </div>
+
+  <main id="view" class="view"><!-- render dinámico --></main>
+
+  <nav id="tabbar" class="tabbar" aria-label="Navegación principal">
+    <button class="tab" data-tab="home" aria-label="Ranking">
+      <span class="tab-icon">🏆</span><span class="tab-label">Ranking</span>
+    </button>
+    <button class="tab" data-tab="game" aria-label="Partida">
+      <span class="tab-icon-wrap"><span class="tab-icon">🃏</span></span><span class="tab-label">Partida</span>
+    </button>
+    <button class="tab" data-tab="history" aria-label="Historial">
+      <span class="tab-icon">📜</span><span class="tab-label">Historial</span>
+    </button>
+    <button class="tab" data-tab="profile" aria-label="Perfil">
+      <span class="tab-icon">👤</span><span class="tab-label">Perfil</span>
+    </button>
+  </nav>
+
+  <div id="sheet-backdrop" class="sheet-backdrop hidden">
+    <div id="sheet" class="sheet" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div id="celebration" class="celebration hidden">
+    <canvas id="confetti-canvas"></canvas>
+    <div class="celebration-content">
+      <div class="celebration-crown">👑</div>
+      <div id="celebration-emoji" class="celebration-emoji"></div>
+      <div class="celebration-title">¡CAMPEÓN!</div>
+      <div id="celebration-name" class="celebration-name"></div>
+      <button id="celebration-close" class="btn btn-gold">Ver resultados</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

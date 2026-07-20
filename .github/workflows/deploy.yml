@@ -1,44 +1,32 @@
 name: Deploy Poker App
-
 on:
   push:
     branches:
       - main
-
 jobs:
-
   deploy:
-
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       id-token: write
-
-
     steps:
-
     - name: Checkout
       uses: actions/checkout@v4
-
-
     - name: Authenticate Google Cloud
       uses: google-github-actions/auth@v2
       with:
         workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
         service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-
     - name: Setup gcloud
       uses: google-github-actions/setup-gcloud@v2
-
-
+    - name: Configure Docker for Artifact Registry
+      run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
     - name: Build image
       run: |
-        gcloud builds submit \
-          --tag us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/poker-app/poker
-
-
+        docker build -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/poker-app/poker .
+    - name: Push image
+      run: |
+        docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/poker-app/poker
     - name: Deploy Cloud Run
       run: |
         gcloud run deploy poker \

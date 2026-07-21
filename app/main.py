@@ -15,7 +15,7 @@ from .auth import (
 )
 from .store import Store
 
-app = FastAPI(title="Mesa Final")
+app = FastAPI(title="Poker Pobre")
 
 
 SUPERADMIN_USERNAME = "superadmin"
@@ -133,7 +133,7 @@ def change_password(payload: schemas.ChangePasswordIn, store: Store = Depends(ge
 
 @app.get("/api/users", response_model=list[schemas.UserOut])
 def list_users(store: Store = Depends(get_store), user=Depends(get_current_user)):
-    users = store.list_users()
+    users = [u for u in store.list_users() if not getattr(u, "is_super", False)]
     users.sort(key=lambda u: u.username.lower())
     return users
 
@@ -332,29 +332,35 @@ def reject_buyin(game_id: int, buyin_id: int, store: Store = Depends(get_store),
 
 # ---------------- Retiros y eliminaciones ----------------
 
-@app.post("/api/games/{game_id}/exit-request", response_model=schemas.GameOut)
-def request_exit(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+@app.post("/api/games/{game_id}/exit", response_model=schemas.GameOut)
+def exit_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    """El propio jugador se retira: sale al instante, sin aprobación del admin."""
     def mut(g):
         if g["status"] != "in_progress":
             return "La partida no está en curso"
         part = next((p for p in g["participants"] if p["user_id"] == user.id), None)
         if not part:
             return "No estás en esta partida"
+        if part.get("role") == "spectator":
+            return "Sos espectador; no estás jugando"
         if part["position"] is not None:
             return "Ya saliste de la partida"
-        if part["exit_requested"]:
-            return "Ya pediste retirarte; esperá al administrador"
-        part["exit_requested"] = True
-    return _run(store, game_id, mut)
 
-
-@app.post("/api/games/{game_id}/exit-request/cancel", response_model=schemas.GameOut)
-def cancel_exit(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
-    def mut(g):
-        part = next((p for p in g["participants"] if p["user_id"] == user.id), None)
-        if not part or not part["exit_requested"]:
-            return "No tenés un retiro pendiente"
+        alive = [p for p in g["participants"]
+                 if p["position"] is None and p.get("role", "player") == "player"]
+        part["position"] = len(alive)
+        part["eliminated_at"] = utcnow()
         part["exit_requested"] = False
+
+        remaining = [p for p in alive if p["user_id"] != part["user_id"]]
+        if len(remaining) == 1:
+            champ = remaining[0]
+            champ["position"] = 1
+            champ["exit_requested"] = False
+            g["status"] = "finished"
+            g["finished_at"] = utcnow()
+            g["winner"] = dict(champ["user"])
+            g["winner_id"] = champ["user_id"]
     return _run(store, game_id, mut)
 
 
@@ -417,24 +423,24 @@ def undo_last(game_id: int, store: Store = Depends(get_store), user=Depends(get_
 
 
 @app.delete("/api/games/{game_id}", status_code=204)
-def cancel_or_delete_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+def delete_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    """Borrar el REGISTRO de una partida: exclusivo del superadmin."""
     game = _load_game(store, game_id)
-    is_super = getattr(user, "is_super", False)
-    if game.admin_id != user.id and not is_super:
-        raise HTTPException(403, "Solo el administrador de la partida o el superadmin pueden hacer esto")
+    _require_super(user)
+    store.delete_game(game_id)
 
-    # El superadmin puede borrar de raíz cualquier partida, esté en el estado que esté
-    if is_super and game.admin_id != user.id:
-        store.delete_game(game_id)
-        return
 
-    if game.status in ("open", "in_progress"):
-        def mut(g):
-            g["status"] = "cancelled"
-            g["finished_at"] = utcnow()
-        store.update_game(game_id, mut)
-    else:
-        store.delete_game(game_id)
+@app.post("/api/games/{game_id}/cancel", response_model=schemas.GameOut)
+def cancel_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    """Cancelar una partida en curso: la puede hacer el admin de esa partida."""
+    def mut(g):
+        if g["admin_id"] != user.id and not getattr(user, "is_super", False):
+            return "__forbidden__"
+        if g["status"] not in ("open", "in_progress"):
+            return "La partida ya terminó"
+        g["status"] = "cancelled"
+        g["finished_at"] = utcnow()
+    return _run(store, game_id, mut)
 
 
 # ============================================================

@@ -521,8 +521,7 @@ function adminPendingCard(g) {
   const isAdmin = g.admin.id === state.me.id;
   if (!isAdmin) return "";
   const pendingBuyins = g.buyins.filter((b) => b.status === "pending");
-  const exits = g.participants.filter((p) => p.exit_requested && p.position === null);
-  if (!pendingBuyins.length && !exits.length) return "";
+  if (!pendingBuyins.length) return "";
 
   let html = `<div class="section-title">Solicitudes</div><div class="card pending-card">`;
   for (const b of pendingBuyins) {
@@ -532,14 +531,6 @@ function adminPendingCard(g) {
         <span class="pr-text"><b>${esc(b.user.username)}</b><span>pide una caja 🪙</span></span>
         <button class="mini-btn mini-no" data-reject="${b.id}">✕</button>
         <button class="mini-btn mini-ok" data-approve="${b.id}">Aprobar</button>
-      </div>`;
-  }
-  for (const p of exits) {
-    html += `
-      <div class="pending-row">
-        <span class="pr-emoji">${p.user.emoji}</span>
-        <span class="pr-text"><b>${esc(p.user.username)}</b><span>pide retirarse 🏳️</span></span>
-        <button class="mini-btn mini-red" data-confirm-exit="${p.user.id}" data-name="${esc(p.user.username)}">Confirmar salida</button>
       </div>`;
   }
   return html + `</div>`;
@@ -565,9 +556,6 @@ function bindPendingActions(g) {
       } catch (e) { toast(e.message, true); }
     })
   );
-  $$("[data-confirm-exit]").forEach((b) =>
-    b.addEventListener("click", () => confirmEliminate(g, Number(b.dataset.confirmExit), b.dataset.name, true))
-  );
 }
 
 function myActionButtons(g) {
@@ -587,9 +575,7 @@ function myActionButtons(g) {
     ? `<button class="btn btn-ghost" disabled>🪙 Caja pedida…</button>`
     : `<button class="btn btn-gold" id="ask-caja">🪙 Pedir caja</button>`;
   if (g.status === "in_progress") {
-    html += mine.exit_requested
-      ? `<button class="btn btn-ghost" id="cancel-exit">🏳️ Cancelar retiro</button>`
-      : `<button class="btn btn-ghost" id="ask-exit">🏳️ Retirarme</button>`;
+    html += `<button class="btn btn-ghost" id="ask-exit">🏳️ Retirarme</button>`;
   }
   return html + `</div>`;
 }
@@ -605,29 +591,24 @@ function bindMyActions(g) {
     } catch (e) { toast(e.message, true); }
   });
   $("#ask-exit")?.addEventListener("click", () => {
+    const alive = g.participants.filter((p) => p.position === null && (p.role || "player") === "player");
     openSheet(`
       <h3>¿Retirarte de la partida?</h3>
-      <p>El administrador tiene que confirmar tu salida. Tu posición queda registrada.</p>
+      <p>Salís al instante y te llevás el puesto ${alive.length}º de esta noche. No se puede deshacer desde acá.</p>
       <div class="btn-row">
         <button class="btn btn-ghost" id="sheet-cancel">Sigo jugando</button>
-        <button class="btn btn-danger" id="sheet-ok">🏳️ Pedir retiro</button>
+        <button class="btn btn-danger" id="sheet-ok">🏳️ Retirarme</button>
       </div>`);
     $("#sheet-cancel").addEventListener("click", closeSheet);
     $("#sheet-ok").addEventListener("click", async () => {
       closeSheet();
+      sound.bust();
+      vibrate([50, 30, 90]);
       try {
-        const updated = await api(`/games/${g.id}/exit-request`, { method: "POST" });
-        toast("Retiro pedido, esperando al admin 🏳️");
+        const updated = await api(`/games/${g.id}/exit`, { method: "POST" });
         updateGame(updated);
       } catch (e) { toast(e.message, true); }
     });
-  });
-  $("#cancel-exit")?.addEventListener("click", async () => {
-    try {
-      const updated = await api(`/games/${g.id}/exit-request/cancel`, { method: "POST" });
-      sound.select();
-      updateGame(updated);
-    } catch (e) { toast(e.message, true); }
   });
 }
 
@@ -734,7 +715,7 @@ function bindCancel(g) {
     $("#sheet-cancel").addEventListener("click", closeSheet);
     $("#sheet-ok").addEventListener("click", async () => {
       try {
-        await api(`/games/${g.id}`, { method: "DELETE" });
+        await api(`/games/${g.id}/cancel`, { method: "POST" });
         closeSheet();
         state.activeGame = null;
         state.lastGameJSON = "null";
@@ -772,7 +753,6 @@ function renderLive(g) {
       <button class="chip ${p.user.id === state.me.id ? "mine" : ""} ${isAdmin ? "" : "static"}"
               data-bust="${p.user.id}" data-name="${esc(p.user.username)}" data-emoji="${p.user.emoji}">
         ${cajas ? `<span class="ch-cajas">${cajas}</span>` : ""}
-        ${p.exit_requested ? `<span class="ch-flag">🏳️</span>` : ""}
         <span class="ch-emoji">${p.user.emoji}</span>
         <span class="ch-name">${esc(p.user.username)}</span>
       </button>`;
@@ -932,7 +912,7 @@ async function renderHistory() {
   for (const gm of games) {
     const ordered = [...gm.participants].sort((a, b) => (a.position || 99) - (b.position || 99));
     const totalCajas = gm.buyins.filter((b) => b.status === "approved").length;
-    const canDelete = gm.admin.id === state.me.id || state.me.is_super;
+    const canDelete = state.me.is_super;
     html += `
       <div class="card hist-card">
         <div class="hist-head">

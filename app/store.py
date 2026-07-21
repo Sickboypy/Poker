@@ -75,7 +75,7 @@ class Store:
     def list_users(self):
         return [_user_obj(d.to_dict()) for d in self.db.collection("users").stream()]
 
-    def create_user(self, username: str, password_hash: str, emoji: str):
+    def create_user(self, username: str, password_hash: str, emoji: str, is_super: bool = False):
         key = username.strip().lower()
         ref = self.db.collection("users").document(key)
 
@@ -89,6 +89,7 @@ class Store:
                 "username": username.strip(),
                 "password_hash": password_hash,
                 "emoji": emoji or "🂡",
+                "is_super": is_super,
                 "created_at": utcnow(),
             }
             txn.set(ref, data)
@@ -96,6 +97,24 @@ class Store:
 
         data = _txn(self.db.transaction())
         return _user_obj(data) if data else None
+
+    def update_password(self, username: str, new_hash: str) -> bool:
+        key = username.strip().lower()
+        ref = self.db.collection("users").document(key)
+        snap = ref.get()
+        if not snap.exists:
+            return False
+        ref.set({"password_hash": new_hash}, merge=True)
+        return True
+
+    def delete_user(self, user_id: int) -> bool:
+        user = self.get_user(user_id)
+        if not user:
+            return False
+        # borrar sesiones del usuario y el documento
+        self.delete_user_sessions(user_id)
+        self.db.collection("users").document(user.username.lower()).delete()
+        return True
 
     # ================= Sesiones =================
 
@@ -202,13 +221,14 @@ def _user_mini(user):
     return {"id": user.id, "username": user.username, "emoji": user.emoji}
 
 
-def _new_participant(user):
+def _new_participant(user, role="player"):
     return {
         "user": _user_mini(user),
         "user_id": user.id,
         "position": None,
         "eliminated_at": None,
         "exit_requested": False,
+        "role": role,
         "joined_at": utcnow(),
     }
 
@@ -221,6 +241,7 @@ def _user_obj(d):
         username=d["username"],
         emoji=d.get("emoji", "🂡"),
         password_hash=d.get("password_hash"),
+        is_super=d.get("is_super", False),
         created_at=_to_dt(d.get("created_at")),
     )
 
@@ -232,6 +253,7 @@ def _participant_obj(d):
         position=d.get("position"),
         eliminated_at=_to_dt(d.get("eliminated_at")),
         exit_requested=d.get("exit_requested", False),
+        role=d.get("role", "player"),
         joined_at=_to_dt(d.get("joined_at")),
     )
 

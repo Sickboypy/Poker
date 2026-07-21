@@ -351,7 +351,7 @@ async function render() {
   try { await refreshActive(); } catch {}
   markTabs();
   startPolling();
-  const renderers = { home: renderHome, game: renderGameTab, history: renderHistory, profile: renderProfile };
+  const renderers = { home: renderHome, game: renderGameTab, history: renderHistory, users: renderUsers, profile: renderProfile };
   try {
     await renderers[state.tab]();
   } catch (e) {
@@ -371,7 +371,7 @@ async function renderHome() {
     const label = g.status === "open" ? "Partida abierta, esperando jugadores" : "Partida en curso";
     const sub = g.status === "open"
       ? `${g.participants.length} anotados`
-      : `${g.participants.filter((p) => p.position === null).length} siguen en pie`;
+      : `${g.participants.filter((p) => p.position === null && (p.role || "player") === "player").length} siguen en pie`;
     html += `
       <button class="active-banner" id="go-active" style="width:100%">
         <span class="dot"></span>
@@ -574,7 +574,15 @@ function myActionButtons(g) {
   const mine = g.participants.find((p) => p.user.id === state.me.id);
   if (!mine || mine.position !== null) return "";
   const pending = hasPendingCaja(g, state.me.id);
+  const isSpectator = mine.role === "spectator";
   let html = `<div class="my-actions">`;
+  if (isSpectator) {
+    // El espectador solo puede pedir caja para sumarse a jugar
+    html += pending
+      ? `<button class="btn btn-ghost" disabled>🪙 Caja pedida, esperando…</button>`
+      : `<button class="btn btn-gold" id="ask-caja">🪙 Comprar caja y jugar</button>`;
+    return html + `</div>`;
+  }
   html += pending
     ? `<button class="btn btn-ghost" disabled>🪙 Caja pedida…</button>`
     : `<button class="btn btn-gold" id="ask-caja">🪙 Pedir caja</button>`;
@@ -741,7 +749,9 @@ function bindCancel(g) {
 
 function renderLive(g) {
   const isAdmin = g.admin.id === state.me.id;
-  const alive = g.participants.filter((p) => p.position === null);
+  const amIn = g.participants.some((p) => p.user.id === state.me.id);
+  const alive = g.participants.filter((p) => p.position === null && (p.role || "player") === "player");
+  const spectators = g.participants.filter((p) => p.position === null && p.role === "spectator");
   const out = g.participants
     .filter((p) => p.position !== null)
     .sort((a, b) => b.position - a.position);
@@ -770,6 +780,25 @@ function renderLive(g) {
   html += `</div>`;
 
   if (!isAdmin) html += myActionButtons(g);
+
+  // Botón para que un usuario que no está en la partida entre como espectador
+  if (!amIn) {
+    html += `<button class="btn btn-ghost" id="spectate-btn" style="margin-top:4px">👀 Mirar como espectador</button>`;
+  }
+
+  if (spectators.length) {
+    html += `<div class="section-title">Espectadores</div><div class="card" style="padding:0">`;
+    for (const p of spectators) {
+      const pending = hasPendingCaja(g, p.user.id);
+      html += `
+        <div class="player-row">
+          <span class="p-emoji">👀</span>
+          <span class="p-name">${esc(p.user.username)}${p.user.id === state.me.id ? ' <span class="you-tag">Vos</span>' : ""}</span>
+          <span style="font-size:13px;color:var(--cream-dim)">${pending ? "🪙 caja pedida" : "mirando"}</span>
+        </div>`;
+    }
+    html += `</div>`;
+  }
 
   if (out.length) {
     html += `<div class="section-title">Afuera</div><div class="card out-list" style="padding:0">`;
@@ -801,6 +830,15 @@ function renderLive(g) {
   bindPendingActions(g);
   bindMyActions(g);
 
+  $("#spectate-btn")?.addEventListener("click", async () => {
+    try {
+      const updated = await api(`/games/${g.id}/join`, { method: "POST" });
+      sound.select();
+      toast("Entraste como espectador 👀");
+      updateGame(updated);
+    } catch (e) { toast(e.message, true); }
+  });
+
   if (isAdmin) {
     $$("[data-bust]").forEach((b) =>
       b.addEventListener("click", () => {
@@ -820,7 +858,7 @@ function renderLive(g) {
 }
 
 function confirmEliminate(g, userId, name, isExit, chipEl) {
-  const alive = g.participants.filter((p) => p.position === null);
+  const alive = g.participants.filter((p) => p.position === null && (p.role || "player") === "player");
   const target = g.participants.find((p) => p.user.id === userId);
   openSheet(`
     <span class="sheet-emoji">${target ? target.user.emoji : "☠️"}</span>
@@ -894,7 +932,7 @@ async function renderHistory() {
   for (const gm of games) {
     const ordered = [...gm.participants].sort((a, b) => (a.position || 99) - (b.position || 99));
     const totalCajas = gm.buyins.filter((b) => b.status === "approved").length;
-    const canDelete = gm.admin.id === state.me.id;
+    const canDelete = gm.admin.id === state.me.id || state.me.is_super;
     html += `
       <div class="card hist-card">
         <div class="hist-head">
@@ -952,7 +990,7 @@ async function renderProfile() {
   let html = `
     <div class="profile-head">
       <span class="pf-emoji">${state.me.emoji}</span>
-      <div class="pf-name">${esc(state.me.username)}</div>
+      <div class="pf-name">${esc(state.me.username)}${state.me.is_super ? ' <span class="admin-tag">Superadmin</span>' : ""}</div>
     </div>`;
 
   if (mine && mine.games_played > 0) {
@@ -965,12 +1003,43 @@ async function renderProfile() {
         <div class="stat-box"><div class="sv">${mine.avg_position ?? "—"}</div><div class="sl">Posición promedio</div></div>
         <div class="stat-box"><div class="sv">${mine.current_streak >= 2 ? "🔥 " : ""}${mine.current_streak}</div><div class="sl">Racha actual</div></div>
       </div>`;
-  } else {
+  } else if (!state.me.is_super) {
     html += `<div class="empty"><span class="e-icon">🃏</span><p>Todavía no jugaste ninguna noche.<br>Tus números van a aparecer acá.</p></div>`;
   }
 
-  html += `<button class="btn btn-ghost" id="logout-btn">Cerrar sesión</button>`;
+  html += `
+    <div class="section-title">Mi cuenta</div>
+    <button class="btn btn-ghost" id="change-pass-btn" style="margin-bottom:10px">🔑 Cambiar mi contraseña</button>
+    <button class="btn btn-ghost" id="logout-btn">Cerrar sesión</button>`;
   view.innerHTML = html;
+
+  $("#change-pass-btn").addEventListener("click", () => {
+    openSheet(`
+      <h3>Cambiar contraseña</h3>
+      <p>Ingresá tu contraseña actual y la nueva.</p>
+      <input type="password" id="cp-current" placeholder="Contraseña actual" class="sheet-input" autocomplete="current-password" />
+      <input type="password" id="cp-new" placeholder="Contraseña nueva (mín. 4)" class="sheet-input" autocomplete="new-password" />
+      <div class="btn-row" style="margin-top:14px">
+        <button class="btn btn-ghost" id="sheet-cancel">Cancelar</button>
+        <button class="btn btn-gold" id="sheet-ok">Guardar</button>
+      </div>`);
+    $("#sheet-cancel").addEventListener("click", closeSheet);
+    $("#sheet-ok").addEventListener("click", async () => {
+      const current = $("#cp-current").value;
+      const nw = $("#cp-new").value;
+      if (!current || !nw) { toast("Completá los dos campos", true); return; }
+      if (nw.length < 4) { toast("La nueva debe tener al menos 4 caracteres", true); return; }
+      try {
+        await api("/auth/change-password", {
+          method: "POST",
+          body: JSON.stringify({ current_password: current, new_password: nw }),
+        });
+        closeSheet();
+        sound.ding();
+        toast("Contraseña actualizada ✓");
+      } catch (e) { toast(e.message, true); }
+    });
+  });
 
   $("#logout-btn").addEventListener("click", async () => {
     try { await api("/auth/logout", { method: "POST" }); } catch {}
@@ -978,6 +1047,92 @@ async function renderProfile() {
     stopPolling();
     showAuth();
   });
+}
+
+/* ---------------- Usuarios ---------------- */
+
+async function renderUsers() {
+  const [users, stats] = await Promise.all([api("/users"), api("/stats")]);
+  const statsById = {};
+  for (const s of stats.leaderboard) statsById[s.user.id] = s;
+  const isSuper = state.me.is_super;
+
+  let html = `<div class="section-title">Usuarios registrados (${users.length})</div>`;
+  if (isSuper) {
+    html += `<p style="font-size:13px;color:var(--cream-dim);margin-bottom:12px">👑 Como superadmin podés resetear contraseñas y borrar usuarios.</p>`;
+  }
+  html += `<div class="card" style="padding:0">`;
+
+  for (const u of users) {
+    const st = statsById[u.id];
+    const sub = st && st.games_played > 0
+      ? `${st.wins} 🏆 · ${st.games_played} jugadas · ${st.total_buyins} 🪙`
+      : (u.is_super ? "cuenta de administración" : "sin partidas todavía");
+    html += `
+      <div class="user-row">
+        <span class="p-emoji">${u.emoji}</span>
+        <span class="user-info">
+          <span class="user-name">${esc(u.username)}${u.is_super ? ' <span class="admin-tag">Super</span>' : ""}</span>
+          <span class="user-sub">${sub}</span>
+        </span>
+        ${isSuper && !u.is_super ? `
+          <button class="mini-btn mini-no" data-reset="${u.id}" data-name="${esc(u.username)}">🔑</button>
+          <button class="mini-btn mini-red" data-deluser="${u.id}" data-name="${esc(u.username)}">🗑️</button>
+        ` : ""}
+      </div>`;
+  }
+  html += `</div>`;
+  view.innerHTML = html;
+
+  if (!isSuper) return;
+
+  $$("[data-reset]").forEach((b) =>
+    b.addEventListener("click", () => {
+      openSheet(`
+        <h3>Resetear contraseña de ${b.dataset.name}</h3>
+        <p>Se le va a asignar una contraseña nueva. Avisale cuál es.</p>
+        <input type="password" id="rp-new" placeholder="Contraseña nueva (mín. 4)" class="sheet-input" autocomplete="new-password" />
+        <div class="btn-row" style="margin-top:14px">
+          <button class="btn btn-ghost" id="sheet-cancel">Cancelar</button>
+          <button class="btn btn-gold" id="sheet-ok">Resetear</button>
+        </div>`);
+      $("#sheet-cancel").addEventListener("click", closeSheet);
+      $("#sheet-ok").addEventListener("click", async () => {
+        const nw = $("#rp-new").value;
+        if (!nw || nw.length < 4) { toast("Mínimo 4 caracteres", true); return; }
+        try {
+          await api("/users/reset-password", {
+            method: "POST",
+            body: JSON.stringify({ user_id: Number(b.dataset.reset), new_password: nw }),
+          });
+          closeSheet();
+          sound.ding();
+          toast(`Contraseña de ${b.dataset.name} reseteada ✓`);
+        } catch (e) { toast(e.message, true); }
+      });
+    })
+  );
+
+  $$("[data-deluser]").forEach((b) =>
+    b.addEventListener("click", () => {
+      openSheet(`
+        <h3>¿Borrar a ${b.dataset.name}?</h3>
+        <p>Se elimina el usuario y sus sesiones. Las partidas que jugó quedan en el historial.</p>
+        <div class="btn-row">
+          <button class="btn btn-ghost" id="sheet-cancel">Cancelar</button>
+          <button class="btn btn-danger" id="sheet-ok">Borrar usuario</button>
+        </div>`);
+      $("#sheet-cancel").addEventListener("click", closeSheet);
+      $("#sheet-ok").addEventListener("click", async () => {
+        try {
+          await api(`/users/${b.dataset.deluser}`, { method: "DELETE" });
+          closeSheet();
+          toast(`${b.dataset.name} borrado`);
+          renderUsers();
+        } catch (e) { closeSheet(); toast(e.message, true); }
+      });
+    })
+  );
 }
 
 /* ---------------- Arranque ---------------- */

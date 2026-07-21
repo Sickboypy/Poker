@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import os
 
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
@@ -15,6 +16,29 @@ from .auth import (
 from .store import Store
 
 app = FastAPI(title="Mesa Final")
+
+
+SUPERADMIN_USERNAME = "superadmin"
+SUPERADMIN_PASSWORD = os.environ.get("SUPERADMIN_PASSWORD", "Holanda123")
+
+
+@app.on_event("startup")
+def seed_superadmin():
+    """Crea el usuario superadmin al arrancar si todavía no existe."""
+    store = get_store()
+    existing = store.get_user_by_username(SUPERADMIN_USERNAME)
+    if existing is None:
+        store.create_user(
+            username=SUPERADMIN_USERNAME,
+            password_hash=hash_password(SUPERADMIN_PASSWORD),
+            emoji="👑",
+            is_super=True,
+        )
+
+
+def _require_super(user):
+    if not getattr(user, "is_super", False):
+        raise HTTPException(403, "Solo el superadmin puede hacer esto")
 
 
 GAME_TYPES = {
@@ -96,6 +120,46 @@ def me(user=Depends(get_current_user)):
     return user
 
 
+@app.post("/api/auth/change-password", status_code=204)
+def change_password(payload: schemas.ChangePasswordIn, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(400, "La contraseña actual no es correcta")
+    store.update_password(user.username, hash_password(payload.new_password))
+
+
+# ============================================================
+# Usuarios (lista, administración del superadmin)
+# ============================================================
+
+@app.get("/api/users", response_model=list[schemas.UserOut])
+def list_users(store: Store = Depends(get_store), user=Depends(get_current_user)):
+    users = store.list_users()
+    users.sort(key=lambda u: u.username.lower())
+    return users
+
+
+@app.post("/api/users/reset-password", status_code=204)
+def reset_password(payload: schemas.ResetPasswordIn, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    _require_super(user)
+    target = store.get_user(payload.user_id)
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    store.update_password(target.username, hash_password(payload.new_password))
+
+
+@app.delete("/api/users/{user_id}", status_code=204)
+def delete_user(user_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    _require_super(user)
+    target = store.get_user(user_id)
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    if getattr(target, "is_super", False):
+        raise HTTPException(400, "No se puede borrar al superadmin")
+    if target.id == user.id:
+        raise HTTPException(400, "No podés borrarte a vos mismo")
+    store.delete_user(user_id)
+
+
 # ============================================================
 # Tipos de juego
 # ============================================================
@@ -162,14 +226,16 @@ def create_game(payload: schemas.GameCreate, store: Store = Depends(get_store), 
 @app.post("/api/games/{game_id}/join", response_model=schemas.GameOut)
 def join_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
     def mut(g):
-        if g["status"] != "open":
-            return "La partida ya arrancó, no se puede entrar"
+        if g["status"] not in ("open", "in_progress"):
+            return "La partida ya terminó"
         if any(p["user_id"] == user.id for p in g["participants"]):
-            return "Ya estás anotado en esta partida"
+            return "Ya estás en esta partida"
+        # En lobby entra como jugador; con la partida en curso entra como espectador
+        role = "player" if g["status"] == "open" else "spectator"
         g["participants"].append({
             "user": {"id": user.id, "username": user.username, "emoji": user.emoji},
             "user_id": user.id, "position": None, "eliminated_at": None,
-            "exit_requested": False, "joined_at": utcnow(),
+            "exit_requested": False, "role": role, "joined_at": utcnow(),
         })
     return _run(store, game_id, mut)
 
@@ -237,6 +303,11 @@ def _resolve_buyin(store, game_id, buyin_id, user, new_status):
             return "Esa caja ya fue resuelta"
         b["status"] = new_status
         b["resolved_at"] = utcnow()
+        # Al aprobar la caja de un espectador, pasa a jugar la mesa
+        if new_status == "approved":
+            part = next((p for p in g["participants"] if p["user_id"] == b["user_id"]), None)
+            if part and part.get("role") == "spectator" and part["position"] is None:
+                part["role"] = "player"
     try:
         return _sorted_game(store.update_game(game_id, mut))
     except LookupError as e:
@@ -297,10 +368,14 @@ def eliminate(game_id: int, payload: schemas.EliminateIn, store: Store = Depends
         part = next((p for p in g["participants"] if p["user_id"] == payload.user_id), None)
         if not part:
             return "Ese jugador no está en la partida"
+        if part.get("role") == "spectator":
+            return "Ese usuario es espectador; todavía no está jugando"
         if part["position"] is not None:
             return "Ese jugador ya salió de la partida"
 
-        alive = [p for p in g["participants"] if p["position"] is None]
+        # Solo cuentan los jugadores (no los espectadores) que siguen vivos
+        alive = [p for p in g["participants"]
+                 if p["position"] is None and p.get("role", "player") == "player"]
         part["position"] = len(alive)
         part["eliminated_at"] = utcnow()
         part["exit_requested"] = False
@@ -344,8 +419,14 @@ def undo_last(game_id: int, store: Store = Depends(get_store), user=Depends(get_
 @app.delete("/api/games/{game_id}", status_code=204)
 def cancel_or_delete_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
     game = _load_game(store, game_id)
-    if game.admin_id != user.id:
-        raise HTTPException(403, "Solo el administrador de la partida puede hacer esto")
+    is_super = getattr(user, "is_super", False)
+    if game.admin_id != user.id and not is_super:
+        raise HTTPException(403, "Solo el administrador de la partida o el superadmin pueden hacer esto")
+
+    # El superadmin puede borrar de raíz cualquier partida, esté en el estado que esté
+    if is_super and game.admin_id != user.id:
+        store.delete_game(game_id)
+        return
 
     if game.status in ("open", "in_progress"):
         def mut(g):
@@ -365,7 +446,7 @@ def get_stats(store: Store = Depends(get_store), user=Depends(get_current_user))
     finished = [g for g in store.list_games(["finished"])]
     finished.sort(key=lambda g: g.finished_at or g.created_at, reverse=True)
 
-    users = store.list_users()
+    users = [u for u in store.list_users() if not getattr(u, "is_super", False)]
     by_user = {
         u.id: {
             "user": u, "games_played": 0, "wins": 0, "podiums": 0,

@@ -1077,3 +1077,32 @@ body { font-size: 17px; }
 .auth-tab { font-size: 16px; }
 .auth-error { font-size: 15px; }
 .empty p { font-size: 16px; }
+
+/* ============================================================
+   v4: usuarios, espectadores, inputs en hojas
+   ============================================================ */
+
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.user-row:last-child { border-bottom: none; }
+.user-row .p-emoji { font-size: 30px; flex-shrink: 0; }
+.user-info { flex: 1; min-width: 0; }
+.user-name { font-weight: 600; font-size: 17px; display: block; }
+.user-sub { font-size: 13px; color: var(--cream-dim); }
+
+.sheet-input {
+  width: 100%;
+  background: rgba(8, 25, 18, 0.6);
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  color: var(--cream);
+  font-size: 17px;
+  margin-bottom: 10px;
+}
+.sheet-input:focus { outline: none; border-color: var(--gold); }

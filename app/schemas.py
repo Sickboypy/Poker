@@ -23,6 +23,17 @@ class UserOut(BaseModel):
     id: int
     username: str
     emoji: str
+    is_super: bool = False
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=4, max_length=100)
+
+
+class ResetPasswordIn(BaseModel):
+    user_id: int
+    new_password: str = Field(min_length=4, max_length=100)
 
 
 # ---------- Partidas ----------
@@ -48,6 +59,7 @@ class ParticipantOut(BaseModel):
     position: Optional[int]
     eliminated_at: Optional[datetime]
     exit_requested: bool
+    role: str = "player"
 
 
 class GameOut(BaseModel):

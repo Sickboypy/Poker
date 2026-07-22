@@ -183,6 +183,7 @@ class Store:
                 _new_participant(admin)
             ],
             "buyins": [],
+            "photos": [],
         }
         self._game_ref(gid).set(data)
         return _game_obj(data)
@@ -286,4 +287,15 @@ def _game_obj(d):
         winner_id=d.get("winner_id"),
         participants=[_participant_obj(p) for p in d.get("participants", [])],
         buyins=[_buyin_obj(b) for b in d.get("buyins", [])],
+        photos=[_photo_obj(p) for p in d.get("photos", [])],
+    )
+
+
+def _photo_obj(d):
+    return SimpleNamespace(
+        id=d["id"],
+        blob=d["blob"],
+        user=SimpleNamespace(**d["user"]),
+        user_id=d["user_id"],
+        uploaded_at=_to_dt(d.get("uploaded_at")),
     )

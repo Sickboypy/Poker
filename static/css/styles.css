@@ -1106,3 +1106,71 @@ body { font-size: 17px; }
   margin-bottom: 10px;
 }
 .sheet-input:focus { outline: none; border-color: var(--gold); }
+
+/* ============================================================
+   v6: fotos e historial con detalle
+   ============================================================ */
+
+.hist-summary {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0;
+  overflow: hidden;
+  transition: transform 0.12s, border-color 0.15s;
+}
+.hist-summary:active { transform: scale(0.98); }
+.hist-chevron {
+  margin-left: auto;
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 14px;
+  align-self: center;
+}
+.hist-summary .hist-winner { align-items: center; }
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.photo-cell {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: rgba(8, 25, 18, 0.5);
+}
+.photo-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  cursor: pointer;
+  display: block;
+}
+.photo-by {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cream);
+  background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.photo-del {
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.6);
+  font-size: 15px;
+  display: grid;
+  place-items: center;
+  backdrop-filter: blur(4px);
+}
+.photo-del:active { transform: scale(0.85); }

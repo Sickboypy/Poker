@@ -16,6 +16,7 @@ const state = {
   newPlayerEmoji: "🂡",
   authMode: "login",
   poller: null,
+  historyDetailId: null,
 };
 
 const EMOJIS = ["🂡", "🦈", "🐺", "🦅", "🃏", "🎩", "🕶️", "🐉", "🦂", "👽", "🤠", "🐯", "💀", "🦁", "🍀", "🔥"];
@@ -285,6 +286,7 @@ $$(".tab").forEach((btn) => {
     sound.click();
     vibrate(10);
     state.tab = btn.dataset.tab;
+    state.historyDetailId = null;
     render();
   });
 });
@@ -739,7 +741,7 @@ function renderLive(g) {
 
   let html = `
     <div class="live-header">
-      <div class="lh-label">☠️ Eliminación directa</div>
+      <div class="lh-label">🗡️ Poker Highlander</div>
       <div class="lh-count">${alive.length}</div>
       <div class="lh-sub">siguen en pie${isAdmin ? " · tocá una ficha para sacar a alguien" : ""}</div>
     </div>
@@ -806,6 +808,13 @@ function renderLive(g) {
       </div>`;
   }
 
+  // Foto en vivo: cualquiera que esté en la partida puede sumar una
+  if (amIn) {
+    html += `
+      <input type="file" id="live-photo-input" accept="image/*" capture="environment" style="display:none" />
+      <button class="btn btn-ghost" id="live-photo-btn" style="margin-top:10px">📷 Sacar/subir foto${(g.photos && g.photos.length) ? ` (${g.photos.length})` : ""}</button>`;
+  }
+
   view.innerHTML = html;
   bindPendingActions(g);
   bindMyActions(g);
@@ -815,6 +824,29 @@ function renderLive(g) {
       const updated = await api(`/games/${g.id}/join`, { method: "POST" });
       sound.select();
       toast("Entraste como espectador 👀");
+      updateGame(updated);
+    } catch (e) { toast(e.message, true); }
+  });
+
+  const livePhotoInput = $("#live-photo-input");
+  $("#live-photo-btn")?.addEventListener("click", () => livePhotoInput.click());
+  livePhotoInput?.addEventListener("change", async () => {
+    const f = livePhotoInput.files[0];
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) { toast("La foto es muy grande (máx 10 MB)", true); return; }
+    toast("Subiendo foto…");
+    const form = new FormData();
+    form.append("file", f);
+    try {
+      const res = await fetch(`/api/games/${g.id}/photos`, { method: "POST", body: form });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null);
+        throw new Error(d && d.detail ? d.detail : "No se pudo subir");
+      }
+      sound.ding();
+      vibrate(20);
+      toast("Foto subida ✓ La vas a ver en el historial");
+      const updated = await api(`/games/${g.id}`);
       updateGame(updated);
     } catch (e) { toast(e.message, true); }
   });
@@ -897,53 +929,151 @@ function renderResult(game) {
 /* ---------------- Historial ---------------- */
 
 async function renderHistory() {
+  // Vista de detalle de una partida puntual
+  if (state.historyDetailId != null) return renderGameDetail(state.historyDetailId);
+
   const games = (await api("/games")).filter((gm) => gm.status === "finished");
 
   if (games.length === 0) {
     view.innerHTML = `
       <div class="empty">
-        <span class="e-icon">📜</span>
+        <span class="e-icon">\u{1F4DC}</span>
         <p>El historial está vacío.<br>Cuando termine la primera partida, queda registrada acá.</p>
       </div>`;
     return;
   }
 
-  let html = "";
+  let html = `<div class="section-title">Partidas jugadas (${games.length})</div>`;
   for (const gm of games) {
-    const ordered = [...gm.participants].sort((a, b) => (a.position || 99) - (b.position || 99));
     const totalCajas = gm.buyins.filter((b) => b.status === "approved").length;
-    const canDelete = state.me.is_super;
+    const nPlayers = gm.participants.filter((p) => (p.role || "player") === "player").length;
+    const nPhotos = (gm.photos || []).length;
     html += `
-      <div class="card hist-card">
+      <button class="card hist-summary" data-open="${gm.id}">
         <div class="hist-head">
           <span class="h-date">${fmtDate(gm.finished_at)}</span>
-          <span class="h-type">☠️ Eliminación</span>
-          ${canDelete ? `<button class="h-del" data-delg="${gm.id}" aria-label="Borrar partida">🗑️</button>` : ""}
+          <span class="h-type">\u{1F5E1}\uFE0F Highlander</span>
         </div>
-        <div class="hist-rank">`;
-    for (const p of ordered) {
-      const cajas = approvedCajas(gm, p.user.id);
-      html += `
-          <div class="pos-row ${p.position === 1 ? "top1" : ""}">
-            <span class="ps-pos">${medal(p.position)}</span>
-            <span class="ps-emoji">${p.user.emoji}</span>
-            <span class="ps-name">${esc(p.user.username)}</span>
-            <span class="ps-time" style="margin-right:8px">${cajas ? cajas + " 🪙" : ""}</span>
-            <span class="ps-time">${p.position === 1 ? "👑 " + fmtTime(gm.finished_at) : "🕐 " + fmtTime(p.eliminated_at)}</span>
-          </div>`;
-    }
-    html += `
+        <div class="hist-winner">
+          <span class="hw-emoji">${gm.winner.emoji}</span>
+          <span>
+            <span class="hw-label">Campeón</span>
+            <span class="hw-name">${esc(gm.winner.username)}</span>
+          </span>
+          <span class="hist-chevron">Ver \u2192</span>
         </div>
-        ${totalCajas ? `<div class="hist-others" style="padding-bottom:12px">${totalCajas} 🪙 en cajas${gm.buy_in_amount ? " &nbsp;·&nbsp; pozo " + money(totalCajas * gm.buy_in_amount) : ""}</div>` : ""}
-      </div>`;
+        <div class="hist-others" style="padding-bottom:12px">
+          ${nPlayers} jugadores${totalCajas ? ` \u00b7 ${totalCajas} \u{1FA99}` : ""}${nPhotos ? ` \u00b7 ${nPhotos} \u{1F4F7}` : ""}
+        </div>
+      </button>`;
   }
   view.innerHTML = html;
 
-  $$("[data-delg]").forEach((b) =>
+  $$("[data-open]").forEach((b) =>
     b.addEventListener("click", () => {
+      sound.click();
+      state.historyDetailId = Number(b.dataset.open);
+      renderHistory();
+    })
+  );
+}
+
+async function renderGameDetail(gameId) {
+  const gm = await api(`/games/${gameId}`);
+  const ordered = [...gm.participants]
+    .filter((p) => (p.role || "player") === "player")
+    .sort((a, b) => (a.position || 99) - (b.position || 99));
+  const totalCajas = gm.buyins.filter((b) => b.status === "approved").length;
+  const canDelete = state.me.is_super;
+  const amIn = gm.participants.some((p) => p.user.id === state.me.id) || state.me.is_super;
+  const photos = gm.photos || [];
+
+  let html = `
+    <button class="btn btn-ghost" id="back-btn" style="margin-bottom:14px">\u2190 Volver al historial</button>
+    <div class="result-winner">
+      <div class="rw-crown">\u{1F451}</div>
+      <span class="rw-emoji">${gm.winner.emoji}</span>
+      <div class="rw-name">${esc(gm.winner.username)}</div>
+      <div class="rw-sub">Campeón \u00b7 ${fmtDate(gm.finished_at)}</div>
+    </div>
+
+    <div class="section-title">Orden de eliminación</div>
+    <p style="font-size:13.5px;color:var(--cream-dim);margin:-4px 0 12px">
+      Del campeón al primero en caer.
+    </p>
+    <div class="card" style="padding:0">`;
+
+  for (const p of ordered) {
+    const cajas = approvedCajas(gm, p.user.id);
+    const label = p.position === 1
+      ? `\u{1F451} campeón \u00b7 ${fmtTime(gm.finished_at)}`
+      : `\u{1F552} eliminado ${fmtTime(p.eliminated_at)}`;
+    html += `
+      <div class="pos-row ${p.position === 1 ? "top1" : ""}">
+        <span class="ps-pos">${medal(p.position)}</span>
+        <span class="ps-emoji">${p.user.emoji}</span>
+        <span class="ps-name">${esc(p.user.username)}</span>
+        <span class="ps-time" style="margin-right:8px">${cajas ? cajas + " \u{1FA99}" : ""}</span>
+        <span class="ps-time">${label}</span>
+      </div>`;
+  }
+  html += `</div>`;
+
+  if (totalCajas) {
+    html += `<div class="hist-others" style="padding:10px 2px">${totalCajas} \u{1FA99} en cajas${gm.buy_in_amount ? " \u00b7 pozo " + money(totalCajas * gm.buy_in_amount) : ""}</div>`;
+  }
+
+  // --- Fotos ---
+  html += `<div class="section-title">Fotos de la noche ${photos.length ? `(${photos.length})` : ""}</div>`;
+  if (photos.length) {
+    html += `<div class="photo-grid">`;
+    for (const ph of photos) {
+      const mine = ph.user.id === state.me.id || state.me.is_super;
+      html += `
+        <div class="photo-cell">
+          <img src="${ph.url || ""}" alt="Foto de ${esc(ph.user.username)}" data-photo-view="${ph.url || ""}" loading="lazy" />
+          <span class="photo-by">${ph.user.emoji} ${esc(ph.user.username)}</span>
+          ${mine ? `<button class="photo-del" data-photo-del="${ph.id}" aria-label="Borrar foto">\u{1F5D1}\uFE0F</button>` : ""}
+        </div>`;
+    }
+    html += `</div>`;
+  } else {
+    html += `<div class="empty" style="padding:24px 20px"><span class="e-icon">\u{1F4F7}</span><p>Todavía no hay fotos de esta partida.</p></div>`;
+  }
+
+  if (amIn) {
+    html += `
+      <input type="file" id="photo-input" accept="image/*" capture="environment" style="display:none" />
+      <button class="btn btn-gold" id="photo-upload-btn" style="margin-top:6px">\u{1F4F7} Subir una foto</button>`;
+  }
+
+  if (canDelete) {
+    html += `<button class="btn btn-ghost" id="del-game-btn" style="margin-top:10px;color:var(--red)">\u{1F5D1}\uFE0F Borrar esta partida</button>`;
+  }
+
+  view.innerHTML = html;
+
+  $("#back-btn").addEventListener("click", () => {
+    state.historyDetailId = null;
+    renderHistory();
+  });
+
+  // ver foto en grande
+  $$("[data-photo-view]").forEach((img) =>
+    img.addEventListener("click", () => {
+      const url = img.dataset.photoView;
+      if (!url) return;
+      openSheet(`<img src="${url}" style="width:100%;border-radius:14px" /><button class="btn btn-ghost" id="sheet-cancel" style="margin-top:12px">Cerrar</button>`);
+      $("#sheet-cancel").addEventListener("click", closeSheet);
+    })
+  );
+
+  // borrar foto
+  $$("[data-photo-del]").forEach((b) =>
+    b.addEventListener("click", async () => {
       openSheet(`
-        <h3>¿Borrar esta partida?</h3>
-        <p>Se elimina del historial y deja de contar para el ranking.</p>
+        <h3>¿Borrar esta foto?</h3>
+        <p>Se elimina para siempre.</p>
         <div class="btn-row">
           <button class="btn btn-ghost" id="sheet-cancel">Cancelar</button>
           <button class="btn btn-danger" id="sheet-ok">Borrar</button>
@@ -951,14 +1081,57 @@ async function renderHistory() {
       $("#sheet-cancel").addEventListener("click", closeSheet);
       $("#sheet-ok").addEventListener("click", async () => {
         try {
-          await api(`/games/${b.dataset.delg}`, { method: "DELETE" });
+          await api(`/games/${gameId}/photos/${b.dataset.photoDel}`, { method: "DELETE" });
           closeSheet();
-          toast("Partida borrada");
-          renderHistory();
+          toast("Foto borrada");
+          renderGameDetail(gameId);
         } catch (e) { closeSheet(); toast(e.message, true); }
       });
     })
   );
+
+  // subir foto
+  const input = $("#photo-input");
+  $("#photo-upload-btn")?.addEventListener("click", () => input.click());
+  input?.addEventListener("change", async () => {
+    const f = input.files[0];
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) { toast("La foto es muy grande (máx 10 MB)", true); return; }
+    toast("Subiendo foto\u2026");
+    const form = new FormData();
+    form.append("file", f);
+    try {
+      const res = await fetch(`/api/games/${gameId}/photos`, { method: "POST", body: form });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null);
+        throw new Error(d && d.detail ? d.detail : "No se pudo subir");
+      }
+      sound.ding();
+      vibrate(20);
+      toast("Foto subida \u2713");
+      renderGameDetail(gameId);
+    } catch (e) { toast(e.message, true); }
+  });
+
+  $("#del-game-btn")?.addEventListener("click", () => {
+    openSheet(`
+      <h3>¿Borrar esta partida?</h3>
+      <p>Se elimina del historial y deja de contar para el ranking. Las fotos también se borran.</p>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="sheet-cancel">Cancelar</button>
+        <button class="btn btn-danger" id="sheet-ok">Borrar</button>
+      </div>`);
+    $("#sheet-cancel").addEventListener("click", closeSheet);
+    $("#sheet-ok").addEventListener("click", async () => {
+      try {
+        await api(`/games/${gameId}`, { method: "DELETE" });
+        closeSheet();
+        state.historyDetailId = null;
+        toast("Partida borrada");
+        renderHistory();
+      } catch (e) { closeSheet(); toast(e.message, true); }
+    });
+  });
 }
 
 /* ---------------- Perfil ---------------- */

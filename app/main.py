@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 import os
+import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import schemas
+from . import photos, schemas
 from .auth import (
     get_current_user,
     get_store,
@@ -43,8 +44,8 @@ def _require_super(user):
 
 GAME_TYPES = {
     "knockout": {
-        "label": "Eliminación directa",
-        "description": "Se juega hasta que queda un solo jugador en pie.",
+        "label": "Poker Highlander",
+        "description": "Solo puede quedar uno: se juega hasta el último en pie.",
         "min_players": 2,
         "available": True,
     },
@@ -66,6 +67,19 @@ def _sorted_game(game):
         key=lambda p: (p.position is not None, p.position or 0, p.user.username.lower())
     )
     game.buyins.sort(key=lambda b: b.requested_at, reverse=True)
+    if getattr(game, "photos", None):
+        game.photos.sort(key=lambda p: p.uploaded_at)
+    return game
+
+
+def _with_photo_urls(game):
+    """Genera URLs firmadas para cada foto (solo en la vista de detalle)."""
+    if photos.enabled():
+        for ph in getattr(game, "photos", []):
+            try:
+                ph.url = photos.signed_url(ph.blob)
+            except Exception:
+                ph.url = None
     return game
 
 
@@ -205,7 +219,7 @@ def list_games(status: str | None = None, store: Store = Depends(get_store), use
 
 @app.get("/api/games/{game_id}", response_model=schemas.GameOut)
 def get_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
-    return _sorted_game(_load_game(store, game_id))
+    return _with_photo_urls(_sorted_game(_load_game(store, game_id)))
 
 
 @app.post("/api/games", response_model=schemas.GameOut, status_code=201)
@@ -328,6 +342,71 @@ def approve_buyin(game_id: int, buyin_id: int, store: Store = Depends(get_store)
 @app.post("/api/games/{game_id}/buyins/{buyin_id}/reject", response_model=schemas.GameOut)
 def reject_buyin(game_id: int, buyin_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
     return _resolve_buyin(store, game_id, buyin_id, user, "rejected")
+
+
+# ---------------- Fotos de la partida ----------------
+
+@app.post("/api/games/{game_id}/photos", response_model=schemas.GameOut, status_code=201)
+async def upload_game_photo(
+    game_id: int,
+    file: UploadFile = File(...),
+    store: Store = Depends(get_store),
+    user=Depends(get_current_user),
+):
+    if not photos.enabled():
+        raise HTTPException(503, "La subida de fotos no está configurada")
+
+    game = _load_game(store, game_id)
+    # Solo quienes están en la partida (jugadores o espectadores) pueden subir
+    if not any(p.user_id == user.id for p in game.participants) and not getattr(user, "is_super", False):
+        raise HTTPException(403, "Solo quienes están en la partida pueden subir fotos")
+
+    if file.content_type not in photos.ALLOWED_TYPES:
+        raise HTTPException(400, "Formato no soportado (usá JPG, PNG, WEBP o HEIC)")
+
+    data = await file.read()
+    if len(data) > photos.MAX_BYTES:
+        raise HTTPException(400, "La foto es muy grande (máximo 10 MB)")
+    if not data:
+        raise HTTPException(400, "El archivo está vacío")
+
+    blob_name = photos.upload_photo(game_id, data, file.content_type)
+
+    def mut(g):
+        g.setdefault("photos", [])
+        g["photos"].append({
+            "id": uuid.uuid4().hex,
+            "blob": blob_name,
+            "user": {"id": user.id, "username": user.username, "emoji": user.emoji},
+            "user_id": user.id,
+            "uploaded_at": utcnow(),
+        })
+
+    return _with_photo_urls(_sorted_game(store.update_game(game_id, mut)))
+
+
+@app.delete("/api/games/{game_id}/photos/{photo_id}", response_model=schemas.GameOut)
+def delete_game_photo(
+    game_id: int,
+    photo_id: str,
+    store: Store = Depends(get_store),
+    user=Depends(get_current_user),
+):
+    game = _load_game(store, game_id)
+    photo = next((p for p in game.photos if p.id == photo_id), None)
+    if not photo:
+        raise HTTPException(404, "Foto no encontrada")
+    # La puede borrar quien la subió o el superadmin
+    if photo.user_id != user.id and not getattr(user, "is_super", False):
+        raise HTTPException(403, "Solo quien subió la foto o el superadmin pueden borrarla")
+
+    blob_name = photo.blob
+    photos.delete_photo(blob_name)
+
+    def mut(g):
+        g["photos"] = [p for p in g.get("photos", []) if p["id"] != photo_id]
+
+    return _with_photo_urls(_sorted_game(store.update_game(game_id, mut)))
 
 
 # ---------------- Retiros y eliminaciones ----------------

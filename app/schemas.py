@@ -62,6 +62,13 @@ class ParticipantOut(BaseModel):
     role: str = "player"
 
 
+class PhotoOut(BaseModel):
+    id: str
+    user: UserOut
+    uploaded_at: datetime
+    url: Optional[str] = None
+
+
 class GameOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -76,6 +83,7 @@ class GameOut(BaseModel):
     winner: Optional[UserOut]
     participants: list[ParticipantOut]
     buyins: list[BuyInOut]
+    photos: list[PhotoOut] = []
 
 
 class EliminateIn(BaseModel):

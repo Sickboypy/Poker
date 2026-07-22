@@ -811,7 +811,7 @@ function renderLive(g) {
   // Foto en vivo: cualquiera que esté en la partida puede sumar una
   if (amIn) {
     html += `
-      <input type="file" id="live-photo-input" accept="image/*" capture="environment" style="display:none" />
+      <input type="file" id="live-photo-input" accept="image/*" style="display:none" />
       <button class="btn btn-ghost" id="live-photo-btn" style="margin-top:10px">📷 Sacar/subir foto${(g.photos && g.photos.length) ? ` (${g.photos.length})` : ""}</button>`;
   }
 
@@ -1038,13 +1038,7 @@ async function renderGameDetail(gameId) {
     }
     html += `</div>`;
   } else {
-    html += `<div class="empty" style="padding:24px 20px"><span class="e-icon">\u{1F4F7}</span><p>Todavía no hay fotos de esta partida.</p></div>`;
-  }
-
-  if (amIn) {
-    html += `
-      <input type="file" id="photo-input" accept="image/*" capture="environment" style="display:none" />
-      <button class="btn btn-gold" id="photo-upload-btn" style="margin-top:6px">\u{1F4F7} Subir una foto</button>`;
+    html += `<div class="empty" style="padding:24px 20px"><span class="e-icon">\u{1F4F7}</span><p>No se subieron fotos en esta partida.</p></div>`;
   }
 
   if (canDelete) {
@@ -1089,29 +1083,6 @@ async function renderGameDetail(gameId) {
       });
     })
   );
-
-  // subir foto
-  const input = $("#photo-input");
-  $("#photo-upload-btn")?.addEventListener("click", () => input.click());
-  input?.addEventListener("change", async () => {
-    const f = input.files[0];
-    if (!f) return;
-    if (f.size > 10 * 1024 * 1024) { toast("La foto es muy grande (máx 10 MB)", true); return; }
-    toast("Subiendo foto\u2026");
-    const form = new FormData();
-    form.append("file", f);
-    try {
-      const res = await fetch(`/api/games/${gameId}/photos`, { method: "POST", body: form });
-      if (!res.ok) {
-        const d = await res.json().catch(() => null);
-        throw new Error(d && d.detail ? d.detail : "No se pudo subir");
-      }
-      sound.ding();
-      vibrate(20);
-      toast("Foto subida \u2713");
-      renderGameDetail(gameId);
-    } catch (e) { toast(e.message, true); }
-  });
 
   $("#del-game-btn")?.addEventListener("click", () => {
     openSheet(`

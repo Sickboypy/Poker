@@ -357,6 +357,8 @@ async def upload_game_photo(
         raise HTTPException(503, "La subida de fotos no está configurada")
 
     game = _load_game(store, game_id)
+    if game.status not in ("open", "in_progress"):
+        raise HTTPException(400, "La partida ya terminó; las fotos se suben durante la partida")
     # Solo quienes están en la partida (jugadores o espectadores) pueden subir
     if not any(p.user_id == user.id for p in game.participants) and not getattr(user, "is_super", False):
         raise HTTPException(403, "Solo quienes están en la partida pueden subir fotos")

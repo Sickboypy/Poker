@@ -811,8 +811,13 @@ function renderLive(g) {
   // Foto en vivo: cualquiera que esté en la partida puede sumar una
   if (amIn) {
     html += `
-      <input type="file" id="live-photo-input" accept="image/*" style="display:none" />
-      <button class="btn btn-ghost" id="live-photo-btn" style="margin-top:10px">📷 Sacar/subir foto${(g.photos && g.photos.length) ? ` (${g.photos.length})` : ""}</button>`;
+      <input type="file" id="live-photo-camera" accept="image/*" capture="environment" style="display:none" />
+      <input type="file" id="live-photo-gallery" accept="image/*" style="display:none" />
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn btn-ghost" id="live-camera-btn">📷 Cámara</button>
+        <button class="btn btn-ghost" id="live-gallery-btn">🖼️ Galería</button>
+      </div>
+      ${(g.photos && g.photos.length) ? `<p style="text-align:center;font-size:13px;color:var(--cream-faint);margin-top:6px">${g.photos.length} foto${g.photos.length > 1 ? "s" : ""} en esta partida · se ven en el historial</p>` : ""}`;
   }
 
   view.innerHTML = html;
@@ -828,10 +833,7 @@ function renderLive(g) {
     } catch (e) { toast(e.message, true); }
   });
 
-  const livePhotoInput = $("#live-photo-input");
-  $("#live-photo-btn")?.addEventListener("click", () => livePhotoInput.click());
-  livePhotoInput?.addEventListener("change", async () => {
-    const f = livePhotoInput.files[0];
+  const uploadLivePhoto = async (f) => {
     if (!f) return;
     if (f.size > 10 * 1024 * 1024) { toast("La foto es muy grande (máx 10 MB)", true); return; }
     toast("Subiendo foto…");
@@ -849,7 +851,13 @@ function renderLive(g) {
       const updated = await api(`/games/${g.id}`);
       updateGame(updated);
     } catch (e) { toast(e.message, true); }
-  });
+  };
+  const camIn = $("#live-photo-camera");
+  const galIn = $("#live-photo-gallery");
+  $("#live-camera-btn")?.addEventListener("click", () => camIn.click());
+  $("#live-gallery-btn")?.addEventListener("click", () => galIn.click());
+  camIn?.addEventListener("change", () => uploadLivePhoto(camIn.files[0]));
+  galIn?.addEventListener("change", () => uploadLivePhoto(galIn.files[0]));
 
   if (isAdmin) {
     $$("[data-bust]").forEach((b) =>
@@ -1028,12 +1036,12 @@ async function renderGameDetail(gameId) {
   if (photos.length) {
     html += `<div class="photo-grid">`;
     for (const ph of photos) {
-      const mine = ph.user.id === state.me.id || state.me.is_super;
+      const canDeletePhoto = state.me.is_super;
       html += `
         <div class="photo-cell">
           <img src="${ph.url || ""}" alt="Foto de ${esc(ph.user.username)}" data-photo-view="${ph.url || ""}" loading="lazy" />
           <span class="photo-by">${ph.user.emoji} ${esc(ph.user.username)}</span>
-          ${mine ? `<button class="photo-del" data-photo-del="${ph.id}" aria-label="Borrar foto">\u{1F5D1}\uFE0F</button>` : ""}
+          ${canDeletePhoto ? `<button class="photo-del" data-photo-del="${ph.id}" aria-label="Borrar foto">\u{1F5D1}\uFE0F</button>` : ""}
         </div>`;
     }
     html += `</div>`;

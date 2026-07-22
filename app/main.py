@@ -398,9 +398,8 @@ def delete_game_photo(
     photo = next((p for p in game.photos if p.id == photo_id), None)
     if not photo:
         raise HTTPException(404, "Foto no encontrada")
-    # La puede borrar quien la subió o el superadmin
-    if photo.user_id != user.id and not getattr(user, "is_super", False):
-        raise HTTPException(403, "Solo quien subió la foto o el superadmin pueden borrarla")
+    # Solo el superadmin puede borrar fotos
+    _require_super(user)
 
     blob_name = photo.blob
     photos.delete_photo(blob_name)

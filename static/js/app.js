@@ -744,6 +744,10 @@ function renderLive(g) {
       <div class="lh-label">🗡️ Poker Highlander</div>
       <div class="lh-count">${alive.length}</div>
       <div class="lh-sub">siguen en pie${isAdmin ? " · tocá una ficha para sacar a alguien" : ""}</div>
+      ${spectators.length ? `
+        <button class="spectator-badge" id="spectators-btn">
+          👀 <b>${spectators.length}</b> mirando${spectators.some((p) => hasPendingCaja(g, p.user.id)) ? ' <span class="spec-dot"></span>' : ""}
+        </button>` : ""}
     </div>
     ${potBar(g)}
     ${adminPendingCard(g)}
@@ -766,20 +770,6 @@ function renderLive(g) {
   // Botón para que un usuario que no está en la partida entre como espectador
   if (!amIn) {
     html += `<button class="btn btn-ghost" id="spectate-btn" style="margin-top:4px">👀 Mirar como espectador</button>`;
-  }
-
-  if (spectators.length) {
-    html += `<div class="section-title">Espectadores</div><div class="card" style="padding:0">`;
-    for (const p of spectators) {
-      const pending = hasPendingCaja(g, p.user.id);
-      html += `
-        <div class="player-row">
-          <span class="p-emoji">👀</span>
-          <span class="p-name">${esc(p.user.username)}${p.user.id === state.me.id ? ' <span class="you-tag">Vos</span>' : ""}</span>
-          <span style="font-size:13px;color:var(--cream-dim)">${pending ? "🪙 caja pedida" : "mirando"}</span>
-        </div>`;
-    }
-    html += `</div>`;
   }
 
   if (out.length) {
@@ -823,6 +813,25 @@ function renderLive(g) {
   view.innerHTML = html;
   bindPendingActions(g);
   bindMyActions(g);
+
+  $("#spectators-btn")?.addEventListener("click", () => {
+    sound.click();
+    let list = `<h3>👀 Mirando la partida (${spectators.length})</h3>
+      <p>Entraron al juego pero todavía no se sumaron a la mesa.</p>
+      <div class="card" style="padding:0;margin-bottom:14px">`;
+    for (const p of spectators) {
+      const pending = hasPendingCaja(g, p.user.id);
+      list += `
+        <div class="player-row">
+          <span class="p-emoji">${p.user.emoji}</span>
+          <span class="p-name">${esc(p.user.username)}${p.user.id === state.me.id ? ' <span class="you-tag">Vos</span>' : ""}</span>
+          <span style="font-size:14px;color:${pending ? "var(--gold)" : "var(--cream-dim)"}">${pending ? "🪙 pidió caja" : "mirando"}</span>
+        </div>`;
+    }
+    list += `</div><button class="btn btn-ghost" id="sheet-cancel">Cerrar</button>`;
+    openSheet(list);
+    $("#sheet-cancel").addEventListener("click", closeSheet);
+  });
 
   $("#spectate-btn")?.addEventListener("click", async () => {
     try {

@@ -1259,3 +1259,13 @@ body { font-size: 17px; }
   margin-bottom: 16px;
 }
 .avatar-preview .av { border-color: var(--gold); }
+
+/* nota explicativa para el espectador */
+.spectator-note {
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--cream-dim);
+  line-height: 1.5;
+  margin: -8px 0 16px;
+  padding: 0 6px;
+}

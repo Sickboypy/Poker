@@ -18,6 +18,7 @@ const state = {
   poller: null,
   historyDetailId: null,
   editingProfile: false,
+  joiningSpectator: false,
 };
 
 const EMOJIS = ["🂡", "🦈", "🐺", "🦅", "🃏", "🎩", "🕶️", "🐉", "🦂", "👽", "🤠", "🐯", "💀", "🦁", "🍀", "🔥"];
@@ -445,9 +446,26 @@ function podiumSlot(s, pos) {
 /* ---------------- Pestaña Partida ---------------- */
 
 async function renderGameTab() {
-  const g = state.activeGame;
+  let g = state.activeGame;
   if (!g) return renderCreate();
   if (g.status === "open") return renderLobby(g);
+
+  // Al abrir una partida en curso, quien no esté anotado entra
+  // automáticamente como espectador (sin botones ni confirmaciones).
+  const amIn = g.participants.some((p) => p.user.id === state.me.id);
+  if (!amIn && !state.joiningSpectator) {
+    state.joiningSpectator = true;
+    try {
+      g = await api(`/games/${g.id}/join`, { method: "POST" });
+      state.activeGame = g;
+      state.lastGameJSON = JSON.stringify(g);
+    } catch {
+      // si falla (ej. la partida terminó justo), seguimos mostrando lo que hay
+    } finally {
+      state.joiningSpectator = false;
+    }
+  }
+
   return renderLive(g);
 }
 
@@ -584,9 +602,11 @@ function myActionButtons(g) {
   if (isSpectator) {
     // El espectador solo puede pedir caja para sumarse a jugar
     html += pending
-      ? `<button class="btn btn-ghost" disabled>🪙 Caja pedida, esperando…</button>`
-      : `<button class="btn btn-gold" id="ask-caja">🪙 Comprar caja y jugar</button>`;
-    return html + `</div>`;
+      ? `<button class="btn btn-ghost" disabled>🪙 Caja pedida, esperando al admin…</button>`
+      : `<button class="btn btn-gold" id="ask-caja">🪙 Comprar caja y entrar a jugar</button>`;
+    html += `</div>
+      <p class="spectator-note">👀 Estás mirando la partida. Para jugar, comprá una caja y esperá que ${esc(g.admin.username)} la apruebe.</p>`;
+    return html;
   }
   html += pending
     ? `<button class="btn btn-ghost" disabled>🪙 Caja pedida…</button>`
@@ -782,11 +802,6 @@ function renderLive(g) {
 
   if (!isAdmin) html += myActionButtons(g);
 
-  // Botón para que un usuario que no está en la partida entre como espectador
-  if (!amIn) {
-    html += `<button class="btn btn-ghost" id="spectate-btn" style="margin-top:4px">👀 Mirar como espectador</button>`;
-  }
-
   if (out.length) {
     html += `<div class="section-title">Afuera</div><div class="card out-list" style="padding:0">`;
     for (const p of out) {
@@ -818,11 +833,7 @@ function renderLive(g) {
     html += `
       <input type="file" id="live-photo-camera" accept="image/*" capture="environment" style="display:none" />
       <input type="file" id="live-photo-gallery" accept="image/*" style="display:none" />
-      <div class="btn-row" style="margin-top:10px">
-        <button class="btn btn-ghost" id="live-camera-btn">📷 Cámara</button>
-        <button class="btn btn-ghost" id="live-gallery-btn">🖼️ Galería</button>
-      </div>
-      ${(g.photos && g.photos.length) ? `<p style="text-align:center;font-size:13px;color:var(--cream-faint);margin-top:6px">${g.photos.length} foto${g.photos.length > 1 ? "s" : ""} en esta partida · se ven en el historial</p>` : ""}`;
+      <button class="btn btn-ghost" id="live-photo-btn" style="margin-top:10px">📷 Subir una foto${(g.photos && g.photos.length) ? ` · ${g.photos.length}` : ""}</button>`;
   }
 
   view.innerHTML = html;
@@ -848,15 +859,6 @@ function renderLive(g) {
     $("#sheet-cancel").addEventListener("click", closeSheet);
   });
 
-  $("#spectate-btn")?.addEventListener("click", async () => {
-    try {
-      const updated = await api(`/games/${g.id}/join`, { method: "POST" });
-      sound.select();
-      toast("Entraste como espectador 👀");
-      updateGame(updated);
-    } catch (e) { toast(e.message, true); }
-  });
-
   const uploadLivePhoto = async (f) => {
     if (!f) return;
     if (f.size > 10 * 1024 * 1024) { toast("La foto es muy grande (máx 10 MB)", true); return; }
@@ -878,8 +880,19 @@ function renderLive(g) {
   };
   const camIn = $("#live-photo-camera");
   const galIn = $("#live-photo-gallery");
-  $("#live-camera-btn")?.addEventListener("click", () => camIn.click());
-  $("#live-gallery-btn")?.addEventListener("click", () => galIn.click());
+  $("#live-photo-btn")?.addEventListener("click", () => {
+    sound.click();
+    const n = (g.photos && g.photos.length) || 0;
+    openSheet(`
+      <h3 style="text-align:center">📷 Subir una foto</h3>
+      <p style="text-align:center">${n ? `Esta partida ya tiene ${n} foto${n > 1 ? "s" : ""}. ` : ""}Se van a poder ver en el historial cuando termine la noche.</p>
+      <button class="btn btn-gold" id="pick-camera" style="margin-bottom:10px">📷 Sacar una foto</button>
+      <button class="btn btn-gold" id="pick-gallery" style="margin-bottom:10px">🖼️ Elegir de la galería</button>
+      <button class="btn btn-ghost" id="sheet-cancel">Cancelar</button>`);
+    $("#sheet-cancel").addEventListener("click", closeSheet);
+    $("#pick-camera").addEventListener("click", () => { closeSheet(); camIn.click(); });
+    $("#pick-gallery").addEventListener("click", () => { closeSheet(); galIn.click(); });
+  });
   camIn?.addEventListener("change", () => uploadLivePhoto(camIn.files[0]));
   galIn?.addEventListener("change", () => uploadLivePhoto(galIn.files[0]));
 

@@ -24,6 +24,13 @@ class UserOut(BaseModel):
     username: str
     emoji: str
     is_super: bool = False
+    avatar_url: Optional[str] = None
+
+
+class UpdateProfileIn(BaseModel):
+    username: Optional[str] = Field(default=None, min_length=2, max_length=24)
+    emoji: Optional[str] = Field(default=None, max_length=8)
+    remove_avatar: bool = False
 
 
 class ChangePasswordIn(BaseModel):

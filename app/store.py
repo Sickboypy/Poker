@@ -98,6 +98,59 @@ class Store:
         data = _txn(self.db.transaction())
         return _user_obj(data) if data else None
 
+    def update_profile(self, user_id: int, emoji: str | None = None,
+                       avatar_blob: str | None = None, clear_avatar: bool = False) -> bool:
+        """Actualiza emoji y/o foto de perfil (sin tocar el nombre)."""
+        user = self.get_user(user_id)
+        if not user:
+            return False
+        ref = self.db.collection("users").document(user.username.lower())
+        data = {}
+        if emoji:
+            data["emoji"] = emoji
+        if clear_avatar:
+            data["avatar_blob"] = None
+        elif avatar_blob:
+            data["avatar_blob"] = avatar_blob
+        if data:
+            ref.set(data, merge=True)
+        return True
+
+    def rename_user(self, user_id: int, new_username: str):
+        """
+        Cambia el nombre de usuario. Como el nombre es el id del documento,
+        hay que mover el documento entero. Devuelve:
+          "ok" | "taken" | "notfound"
+        """
+        user = self.get_user(user_id)
+        if not user:
+            return "notfound"
+
+        old_key = user.username.lower()
+        new_key = new_username.strip().lower()
+
+        if old_key == new_key:
+            # Solo cambia mayúsculas/minúsculas: actualizar en el lugar
+            self.db.collection("users").document(old_key).set(
+                {"username": new_username.strip()}, merge=True
+            )
+            return "ok"
+
+        new_ref = self.db.collection("users").document(new_key)
+        if new_ref.get().exists:
+            return "taken"
+
+        old_ref = self.db.collection("users").document(old_key)
+        snap = old_ref.get()
+        if not snap.exists:
+            return "notfound"
+
+        data = snap.to_dict()
+        data["username"] = new_username.strip()
+        new_ref.set(data)
+        old_ref.delete()
+        return "ok"
+
     def update_password(self, username: str, new_hash: str) -> bool:
         key = username.strip().lower()
         ref = self.db.collection("users").document(key)
@@ -243,6 +296,7 @@ def _user_obj(d):
         emoji=d.get("emoji", "🂡"),
         password_hash=d.get("password_hash"),
         is_super=d.get("is_super", False),
+        avatar_blob=d.get("avatar_blob"),
         created_at=_to_dt(d.get("created_at")),
     )
 

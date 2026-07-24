@@ -113,6 +113,25 @@ def signed_url(blob_name: str, minutes: int = 60) -> str:
     )
 
 
+def upload_avatar(user_id: int, data: bytes, content_type: str) -> str:
+    """Sube la foto de perfil de un usuario y devuelve el nombre del blob."""
+    ext = ALLOWED_TYPES.get(content_type, "jpg")
+    blob_name = f"avatars/{user_id}/{uuid.uuid4().hex}.{ext}"
+    blob = _get_bucket().blob(blob_name)
+    blob.upload_from_string(data, content_type=content_type)
+    return blob_name
+
+
+def download_photo(blob_name: str):
+    """Devuelve (bytes, content_type) de una foto, o (None, None) si no existe."""
+    try:
+        blob = _get_bucket().blob(blob_name)
+        data = blob.download_as_bytes()
+        return data, (blob.content_type or "image/jpeg")
+    except Exception:
+        return None, None
+
+
 def delete_photo(blob_name: str) -> None:
     try:
         _get_bucket().blob(blob_name).delete()

@@ -1205,3 +1205,57 @@ body { font-size: 17px; }
   display: inline-block;
   animation: blink 1.2s infinite;
 }
+
+/* ============================================================
+   v10: fotos de perfil (avatares)
+   ============================================================ */
+
+/* El avatar reemplaza al emoji: hereda el tamaño de fuente del contexto
+   y lo convierte en un círculo con la foto recortada. */
+.av {
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--felt-dark);
+  border: 2px solid rgba(227, 179, 76, 0.5);
+  line-height: 0;
+}
+.av img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* tamaños: el ancho/alto se derivan del tamaño de fuente de cada contexto */
+.av.rank-emoji { width: 34px; height: 34px; }
+.av.p-emoji { width: 36px; height: 36px; }
+.av.pr-emoji { width: 32px; height: 32px; }
+.av.ch-emoji { width: 44px; height: 44px; border-width: 0; }
+.av.o-emoji { width: 28px; height: 28px; }
+.av.ps-emoji { width: 30px; height: 30px; }
+.av.hw-emoji { width: 40px; height: 40px; }
+.av.rw-emoji { width: 66px; height: 66px; margin: 4px auto; display: block; border-width: 3px; }
+.av.pf-emoji { width: 96px; height: 96px; margin: 0 auto; display: block; border-width: 3px; }
+.av.celebration-emoji { width: 110px; height: 110px; margin: 0 auto; display: block; border-width: 4px; }
+.av.chip-av { width: 24px; height: 24px; border-width: 1.5px; }
+
+.me-chip { gap: 7px; }
+
+/* Editor de perfil */
+.avatar-editor {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 14px;
+  margin-bottom: 6px;
+  text-align: center;
+  background: rgba(243, 235, 216, 0.04);
+}
+.avatar-preview {
+  font-size: 90px;
+  line-height: 1;
+  margin-bottom: 16px;
+}
+.avatar-preview .av { border-color: var(--gold); }

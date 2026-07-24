@@ -17,6 +17,7 @@ const state = {
   authMode: "login",
   poller: null,
   historyDetailId: null,
+  editingProfile: false,
 };
 
 const EMOJIS = ["🂡", "🦈", "🐺", "🦅", "🃏", "🎩", "🕶️", "🐉", "🦂", "👽", "🤠", "🐯", "💀", "🦁", "🍀", "🔥"];
@@ -171,7 +172,9 @@ function launchConfetti(durationMs = 4500) {
 }
 
 function celebrate(winner) {
-  $("#celebration-emoji").textContent = winner.emoji;
+  $("#celebration-emoji").innerHTML = winner.avatar_url
+    ? `<span class="av celebration-emoji"><img src="${winner.avatar_url}" alt="" /></span>`
+    : winner.emoji;
   $("#celebration-name").textContent = winner.username;
   $("#celebration").classList.remove("hidden");
   sound.fanfare();
@@ -200,6 +203,17 @@ function fmtTime(iso) {
   return d.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
 }
 const medal = (pos) => ({ 1: "🥇", 2: "🥈", 3: "🥉" }[pos] || `${pos}º`);
+
+/**
+ * Devuelve el HTML del avatar de un usuario: su foto si tiene, o el emoji.
+ * `cls` es la clase CSS de tamaño que usa el contenedor (ej. "rank-emoji").
+ */
+function avatar(user, cls = "") {
+  if (user && user.avatar_url) {
+    return `<span class="av ${cls}"><img src="${user.avatar_url}" alt="" loading="lazy" /></span>`;
+  }
+  return `<span class="${cls}">${(user && user.emoji) || "🂡"}</span>`;
+}
 const money = (n) => "$" + Number(n).toLocaleString("es");
 
 function approvedCajas(game, userId) {
@@ -274,7 +288,7 @@ function enterApp() {
   $("#auth").classList.add("hidden");
   $("#tabbar").classList.remove("hidden");
   const chip = $("#me-chip");
-  chip.textContent = `${state.me.emoji} ${state.me.username}`;
+  chip.innerHTML = `${avatar(state.me, "chip-av")} ${esc(state.me.username)}`;
   chip.classList.remove("hidden");
   render();
 }
@@ -287,6 +301,7 @@ $$(".tab").forEach((btn) => {
     vibrate(10);
     state.tab = btn.dataset.tab;
     state.historyDetailId = null;
+    state.editingProfile = false;
     render();
   });
 });
@@ -399,7 +414,7 @@ async function renderHome() {
       html += `
         <div class="rank-row">
           <span class="rank-pos">${i + 1}</span>
-          <span class="rank-emoji">${s.user.emoji}</span>
+          ${avatar(s.user, "rank-emoji")}
           <span class="rank-name">${esc(s.user.username)}
             ${s.current_streak >= 2 ? `<span class="rank-streak">🔥 ${s.current_streak} seguidas</span>` : ""}
           </span>
@@ -421,7 +436,7 @@ function podiumSlot(s, pos) {
   return `
     <div class="podium-slot podium-${pos}">
       <span class="p-medal">${medal(pos)}</span>
-      <span class="p-emoji">${s.user.emoji}</span>
+      ${avatar(s.user, "p-emoji")}
       <div class="p-name">${esc(s.user.username)}</div>
       <div class="p-wins">${s.wins} ${s.wins === 1 ? "victoria" : "victorias"}</div>
     </div>`;
@@ -529,7 +544,7 @@ function adminPendingCard(g) {
   for (const b of pendingBuyins) {
     html += `
       <div class="pending-row">
-        <span class="pr-emoji">${b.user.emoji}</span>
+        ${avatar(b.user, "pr-emoji")}
         <span class="pr-text"><b>${esc(b.user.username)}</b><span>pide una caja 🪙</span></span>
         <button class="mini-btn mini-no" data-reject="${b.id}">✕</button>
         <button class="mini-btn mini-ok" data-approve="${b.id}">Aprobar</button>
@@ -651,7 +666,7 @@ function renderLobby(g) {
     const cajas = approvedCajas(g, p.user.id);
     html += `
       <div class="player-row">
-        <span class="p-emoji">${p.user.emoji}</span>
+        ${avatar(p.user, "p-emoji")}
         <span class="p-name">${esc(p.user.username)}${playerTag(g, p.user.id)}</span>
         <span style="font-size:13px;color:var(--cream-dim)">${cajas ? cajas + " 🪙" : ""}</span>
       </div>`;
@@ -759,7 +774,7 @@ function renderLive(g) {
       <button class="chip ${p.user.id === state.me.id ? "mine" : ""} ${isAdmin ? "" : "static"}"
               data-bust="${p.user.id}" data-name="${esc(p.user.username)}" data-emoji="${p.user.emoji}">
         ${cajas ? `<span class="ch-cajas">${cajas}</span>` : ""}
-        <span class="ch-emoji">${p.user.emoji}</span>
+        ${avatar(p.user, "ch-emoji")}
         <span class="ch-name">${esc(p.user.username)}</span>
       </button>`;
   }
@@ -779,7 +794,7 @@ function renderLive(g) {
       html += `
         <div class="out-row">
           <span class="o-pos">${p.position}º</span>
-          <span class="o-emoji">${p.user.emoji}</span>
+          ${avatar(p.user, "o-emoji")}
           <span class="o-name">${esc(p.user.username)}</span>
           <span class="o-cajas">${cajas ? cajas + " 🪙" : ""}</span>
           <span class="o-time">🕐 ${fmtTime(p.eliminated_at)}</span>
@@ -823,7 +838,7 @@ function renderLive(g) {
       const pending = hasPendingCaja(g, p.user.id);
       list += `
         <div class="player-row">
-          <span class="p-emoji">${p.user.emoji}</span>
+          ${avatar(p.user, "p-emoji")}
           <span class="p-name">${esc(p.user.username)}${p.user.id === state.me.id ? ' <span class="you-tag">Vos</span>' : ""}</span>
           <span style="font-size:14px;color:${pending ? "var(--gold)" : "var(--cream-dim)"}">${pending ? "🪙 pidió caja" : "mirando"}</span>
         </div>`;
@@ -919,7 +934,7 @@ function renderResult(game) {
   let html = `
     <div class="result-winner">
       <div class="rw-crown">👑</div>
-      <span class="rw-emoji">${game.winner.emoji}</span>
+      ${avatar(game.winner, "rw-emoji")}
       <div class="rw-name">${esc(game.winner.username)}</div>
       <div class="rw-sub">Campeón de la noche${game.buy_in_amount ? ` · pozo ${money(totalCajas * game.buy_in_amount)}` : ""}</div>
     </div>
@@ -930,7 +945,7 @@ function renderResult(game) {
     html += `
       <div class="pos-row ${p.position === 1 ? "top1" : ""}">
         <span class="ps-pos">${medal(p.position)}</span>
-        <span class="ps-emoji">${p.user.emoji}</span>
+        ${avatar(p.user, "ps-emoji")}
         <span class="ps-name">${esc(p.user.username)}</span>
         <span class="ps-time" style="margin-right:8px">${cajas ? cajas + " 🪙" : ""}</span>
         <span class="ps-time">${p.position === 1 ? "👑 " + fmtTime(game.finished_at) : "🕐 " + fmtTime(p.eliminated_at)}</span>
@@ -972,7 +987,7 @@ async function renderHistory() {
           <span class="h-type">\u{1F5E1}\uFE0F Highlander</span>
         </div>
         <div class="hist-winner">
-          <span class="hw-emoji">${gm.winner.emoji}</span>
+          ${avatar(gm.winner, "hw-emoji")}
           <span>
             <span class="hw-label">Campeón</span>
             <span class="hw-name">${esc(gm.winner.username)}</span>
@@ -1009,7 +1024,7 @@ async function renderGameDetail(gameId) {
     <button class="btn btn-ghost" id="back-btn" style="margin-bottom:14px">\u2190 Volver al historial</button>
     <div class="result-winner">
       <div class="rw-crown">\u{1F451}</div>
-      <span class="rw-emoji">${gm.winner.emoji}</span>
+      ${avatar(gm.winner, "rw-emoji")}
       <div class="rw-name">${esc(gm.winner.username)}</div>
       <div class="rw-sub">Campeón \u00b7 ${fmtDate(gm.finished_at)}</div>
     </div>
@@ -1028,7 +1043,7 @@ async function renderGameDetail(gameId) {
     html += `
       <div class="pos-row ${p.position === 1 ? "top1" : ""}">
         <span class="ps-pos">${medal(p.position)}</span>
-        <span class="ps-emoji">${p.user.emoji}</span>
+        ${avatar(p.user, "ps-emoji")}
         <span class="ps-name">${esc(p.user.username)}</span>
         <span class="ps-time" style="margin-right:8px">${cajas ? cajas + " \u{1FA99}" : ""}</span>
         <span class="ps-time">${label}</span>
@@ -1125,12 +1140,14 @@ async function renderGameDetail(gameId) {
 /* ---------------- Perfil ---------------- */
 
 async function renderProfile() {
+  if (state.editingProfile) return renderProfileEdit();
+
   const stats = await api("/stats");
   const mine = stats.leaderboard.find((s) => s.user.id === state.me.id);
 
   let html = `
     <div class="profile-head">
-      <span class="pf-emoji">${state.me.emoji}</span>
+      ${avatar(state.me, "pf-emoji")}
       <div class="pf-name">${esc(state.me.username)}${state.me.is_super ? ' <span class="admin-tag">Superadmin</span>' : ""}</div>
     </div>`;
 
@@ -1140,20 +1157,156 @@ async function renderProfile() {
         <div class="stat-box"><div class="sv">${mine.wins}</div><div class="sl">Victorias</div></div>
         <div class="stat-box"><div class="sv">${Math.round(mine.win_rate * 100)}%</div><div class="sl">De victorias</div></div>
         <div class="stat-box"><div class="sv">${mine.games_played}</div><div class="sl">Noches jugadas</div></div>
-        <div class="stat-box"><div class="sv">${mine.total_buyins} 🪙</div><div class="sl">Cajas totales</div></div>
-        <div class="stat-box"><div class="sv">${mine.avg_position ?? "—"}</div><div class="sl">Posición promedio</div></div>
-        <div class="stat-box"><div class="sv">${mine.current_streak >= 2 ? "🔥 " : ""}${mine.current_streak}</div><div class="sl">Racha actual</div></div>
+        <div class="stat-box"><div class="sv">${mine.total_buyins} \u{1FA99}</div><div class="sl">Cajas totales</div></div>
+        <div class="stat-box"><div class="sv">${mine.avg_position ?? "\u2014"}</div><div class="sl">Posición promedio</div></div>
+        <div class="stat-box"><div class="sv">${mine.current_streak >= 2 ? "\u{1F525} " : ""}${mine.current_streak}</div><div class="sl">Racha actual</div></div>
       </div>`;
   } else if (!state.me.is_super) {
-    html += `<div class="empty"><span class="e-icon">🃏</span><p>Todavía no jugaste ninguna noche.<br>Tus números van a aparecer acá.</p></div>`;
+    html += `<div class="empty"><span class="e-icon">\u{1F0CF}</span><p>Todavía no jugaste ninguna noche.<br>Tus números van a aparecer acá.</p></div>`;
   }
 
   html += `
     <div class="section-title">Mi cuenta</div>
-    <button class="btn btn-ghost" id="change-pass-btn" style="margin-bottom:10px">🔑 Cambiar mi contraseña</button>
+    <button class="btn btn-gold" id="edit-profile-btn" style="margin-bottom:10px">\u270F\uFE0F Editar mi perfil</button>
     <button class="btn btn-ghost" id="logout-btn">Cerrar sesión</button>`;
   view.innerHTML = html;
 
+  $("#edit-profile-btn").addEventListener("click", () => {
+    sound.click();
+    state.editingProfile = true;
+    renderProfile();
+  });
+
+  $("#logout-btn").addEventListener("click", async () => {
+    try { await api("/auth/logout", { method: "POST" }); } catch {}
+    state.me = null;
+    stopPolling();
+    showAuth();
+  });
+}
+
+function renderProfileEdit() {
+  const hasPhoto = !!state.me.avatar_url;
+
+  let html = `
+    <button class="btn btn-ghost" id="back-btn" style="margin-bottom:16px">\u2190 Volver</button>
+
+    <div class="section-title">Foto de perfil</div>
+    <div class="avatar-editor">
+      <div class="avatar-preview">${avatar(state.me, "pf-emoji")}</div>
+      <input type="file" id="av-camera" accept="image/*" capture="user" style="display:none" />
+      <input type="file" id="av-gallery" accept="image/*" style="display:none" />
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="av-camera-btn">\u{1F4F7} Cámara</button>
+        <button class="btn btn-ghost" id="av-gallery-btn">\u{1F5BC}\uFE0F Galería</button>
+      </div>
+      ${hasPhoto ? `<button class="btn btn-ghost" id="av-remove-btn" style="margin-top:10px;color:var(--red)">Quitar foto y usar emoji</button>` : ""}
+    </div>
+
+    <div class="section-title">Emoji ${hasPhoto ? "(se usa si no tenés foto)" : ""}</div>
+    <div class="card">
+      <div class="emoji-picker" id="pf-emojis">
+        ${EMOJIS.map((e) => `<button class="emoji-option ${e === state.me.emoji ? "selected" : ""}" data-emoji="${e}">${e}</button>`).join("")}
+      </div>
+    </div>
+
+    <div class="section-title">Nombre de usuario</div>
+    <div class="card">
+      <input type="text" id="pf-username" class="sheet-input" style="margin-bottom:0"
+             value="${esc(state.me.username)}" maxlength="24" autocomplete="username" />
+      <p style="font-size:13px;color:var(--cream-faint);margin-top:8px">
+        Con este nombre entrás a la app. Se actualiza en todas tus partidas.
+      </p>
+    </div>
+    <button class="btn btn-gold" id="pf-save" style="margin-top:6px">Guardar cambios</button>
+
+    <div class="section-title">Seguridad</div>
+    <button class="btn btn-ghost" id="change-pass-btn">\u{1F511} Cambiar mi contraseña</button>`;
+
+  view.innerHTML = html;
+
+  $("#back-btn").addEventListener("click", () => {
+    state.editingProfile = false;
+    renderProfile();
+  });
+
+  // --- emoji ---
+  let pickedEmoji = state.me.emoji;
+  $$("#pf-emojis .emoji-option").forEach((b) =>
+    b.addEventListener("click", () => {
+      sound.select();
+      pickedEmoji = b.dataset.emoji;
+      $$("#pf-emojis .emoji-option").forEach((x) => x.classList.toggle("selected", x === b));
+    })
+  );
+
+  // --- guardar nombre + emoji ---
+  $("#pf-save").addEventListener("click", async () => {
+    const newName = $("#pf-username").value.trim();
+    if (!newName || newName.length < 2) { toast("El nombre debe tener al menos 2 caracteres", true); return; }
+    try {
+      const updated = await api("/auth/profile", {
+        method: "PATCH",
+        body: JSON.stringify({ username: newName, emoji: pickedEmoji }),
+      });
+      state.me = updated;
+      sound.ding();
+      vibrate(20);
+      toast("Perfil actualizado \u2713");
+      const chip = $("#me-chip");
+      chip.innerHTML = `${avatar(state.me, "chip-av")} ${esc(state.me.username)}`;
+      renderProfileEdit();
+    } catch (e) { toast(e.message, true); }
+  });
+
+  // --- avatar: subir ---
+  const uploadAvatar = async (f) => {
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) { toast("La foto es muy grande (máx 10 MB)", true); return; }
+    toast("Subiendo foto\u2026");
+    const form = new FormData();
+    form.append("file", f);
+    try {
+      const res = await fetch("/api/auth/avatar", { method: "POST", body: form });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null);
+        throw new Error(d && d.detail ? d.detail : "No se pudo subir");
+      }
+      state.me = await res.json();
+      // cache-busting para ver la foto nueva al instante
+      if (state.me.avatar_url) state.me.avatar_url += `?t=${Date.now()}`;
+      sound.ding();
+      vibrate(20);
+      toast("Foto de perfil actualizada \u2713");
+      const chip = $("#me-chip");
+      chip.innerHTML = `${avatar(state.me, "chip-av")} ${esc(state.me.username)}`;
+      renderProfileEdit();
+    } catch (e) { toast(e.message, true); }
+  };
+  const avCam = $("#av-camera");
+  const avGal = $("#av-gallery");
+  $("#av-camera-btn").addEventListener("click", () => avCam.click());
+  $("#av-gallery-btn").addEventListener("click", () => avGal.click());
+  avCam.addEventListener("change", () => uploadAvatar(avCam.files[0]));
+  avGal.addEventListener("change", () => uploadAvatar(avGal.files[0]));
+
+  // --- avatar: quitar ---
+  $("#av-remove-btn")?.addEventListener("click", async () => {
+    try {
+      const updated = await api("/auth/profile", {
+        method: "PATCH",
+        body: JSON.stringify({ remove_avatar: true }),
+      });
+      state.me = updated;
+      sound.click();
+      toast("Volviste a usar tu emoji");
+      const chip = $("#me-chip");
+      chip.innerHTML = `${avatar(state.me, "chip-av")} ${esc(state.me.username)}`;
+      renderProfileEdit();
+    } catch (e) { toast(e.message, true); }
+  });
+
+  // --- contraseña ---
   $("#change-pass-btn").addEventListener("click", () => {
     openSheet(`
       <h3>Cambiar contraseña</h3>
@@ -1177,16 +1330,9 @@ async function renderProfile() {
         });
         closeSheet();
         sound.ding();
-        toast("Contraseña actualizada ✓");
+        toast("Contraseña actualizada \u2713");
       } catch (e) { toast(e.message, true); }
     });
-  });
-
-  $("#logout-btn").addEventListener("click", async () => {
-    try { await api("/auth/logout", { method: "POST" }); } catch {}
-    state.me = null;
-    stopPolling();
-    showAuth();
   });
 }
 
@@ -1211,7 +1357,7 @@ async function renderUsers() {
       : (u.is_super ? "cuenta de administración" : "sin partidas todavía");
     html += `
       <div class="user-row">
-        <span class="p-emoji">${u.emoji}</span>
+        ${avatar(u, "p-emoji")}
         <span class="user-info">
           <span class="user-name">${esc(u.username)}${u.is_super ? ' <span class="admin-tag">Super</span>' : ""}</span>
           <span class="user-sub">${sub}</span>

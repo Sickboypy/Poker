@@ -72,6 +72,56 @@ def _sorted_game(game):
     return game
 
 
+def _avatar_url(user):
+    """
+    URL del avatar servida por nuestra propia app. Evitamos firmar una URL
+    de GCS en cada request (sería lento con el refresco automático); el
+    endpoint /api/avatars/{id} hace de proxy y el navegador lo cachea.
+    """
+    if not getattr(user, "avatar_blob", None):
+        return None
+    return f"/api/avatars/{user.id}"
+
+
+def _refresh_users(game, store: Store):
+    """
+    Actualiza los datos de usuario embebidos en la partida (nombre, emoji,
+    avatar) con el perfil actual, para que un cambio de perfil se refleje
+    también en las partidas ya jugadas.
+    """
+    current = {u.id: u for u in store.list_users()}
+    avatars = {}
+
+    def url_for(u):
+        if u.id not in avatars:
+            avatars[u.id] = _avatar_url(u)
+        return avatars[u.id]
+
+    def apply(holder):
+        u = current.get(getattr(holder, "user_id", None))
+        if u:
+            holder.user.username = u.username
+            holder.user.emoji = u.emoji
+            holder.user.avatar_url = url_for(u)
+
+    for p in getattr(game, "participants", []):
+        apply(p)
+    for b in getattr(game, "buyins", []):
+        apply(b)
+    for ph in getattr(game, "photos", []):
+        apply(ph)
+
+    for attr in ("admin", "winner"):
+        who = getattr(game, attr, None)
+        if who:
+            u = current.get(who.id)
+            if u:
+                who.username = u.username
+                who.emoji = u.emoji
+                who.avatar_url = url_for(u)
+    return game
+
+
 def _with_photo_urls(game):
     """Genera URLs firmadas para cada foto (solo en la vista de detalle)."""
     if photos.enabled():
@@ -111,7 +161,7 @@ def register(payload: schemas.RegisterIn, response: Response, store: Store = Dep
         raise HTTPException(400, f"El usuario «{username}» ya existe")
 
     _set_session(response, store, user)
-    return user
+    return _user_out(user)
 
 
 @app.post("/api/auth/login", response_model=schemas.UserOut)
@@ -120,7 +170,7 @@ def login(payload: schemas.LoginIn, response: Response, store: Store = Depends(g
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(401, "Usuario o contraseña incorrectos")
     _set_session(response, store, user)
-    return user
+    return _user_out(user)
 
 
 @app.post("/api/auth/logout", status_code=204)
@@ -129,9 +179,20 @@ def logout(response: Response, store: Store = Depends(get_store), user=Depends(g
     response.delete_cookie("mf_token")
 
 
+def _user_out(u):
+    """Convierte un usuario del store en UserOut, resolviendo el avatar."""
+    return schemas.UserOut(
+        id=u.id,
+        username=u.username,
+        emoji=u.emoji,
+        is_super=getattr(u, "is_super", False),
+        avatar_url=_avatar_url(u),
+    )
+
+
 @app.get("/api/auth/me", response_model=schemas.UserOut)
 def me(user=Depends(get_current_user)):
-    return user
+    return _user_out(user)
 
 
 @app.post("/api/auth/change-password", status_code=204)
@@ -139,6 +200,78 @@ def change_password(payload: schemas.ChangePasswordIn, store: Store = Depends(ge
     if not verify_password(payload.current_password, user.password_hash):
         raise HTTPException(400, "La contraseña actual no es correcta")
     store.update_password(user.username, hash_password(payload.new_password))
+
+
+@app.patch("/api/auth/profile", response_model=schemas.UserOut)
+def update_profile(payload: schemas.UpdateProfileIn, store: Store = Depends(get_store), user=Depends(get_current_user)):
+    # Cambio de nombre de usuario
+    if payload.username and payload.username.strip() != user.username:
+        new_name = payload.username.strip()
+        if not new_name:
+            raise HTTPException(400, "El nombre no puede estar vacío")
+        if new_name.lower() == SUPERADMIN_USERNAME and not getattr(user, "is_super", False):
+            raise HTTPException(400, "Ese nombre está reservado")
+        result = store.rename_user(user.id, new_name)
+        if result == "taken":
+            raise HTTPException(400, f"El usuario «{new_name}» ya existe")
+        if result == "notfound":
+            raise HTTPException(404, "Usuario no encontrado")
+
+    # Emoji y/o quitar avatar
+    if payload.emoji or payload.remove_avatar:
+        if payload.remove_avatar and getattr(user, "avatar_blob", None):
+            photos.delete_photo(user.avatar_blob)
+        store.update_profile(
+            user.id,
+            emoji=payload.emoji,
+            clear_avatar=payload.remove_avatar,
+        )
+
+    updated = store.get_user(user.id)
+    return _user_out(updated)
+
+
+@app.post("/api/auth/avatar", response_model=schemas.UserOut)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    store: Store = Depends(get_store),
+    user=Depends(get_current_user),
+):
+    if not photos.enabled():
+        raise HTTPException(503, "La subida de fotos no está configurada")
+    if file.content_type not in photos.ALLOWED_TYPES:
+        raise HTTPException(400, "Formato no soportado (usá JPG, PNG, WEBP o HEIC)")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "El archivo está vacío")
+    if len(data) > photos.MAX_BYTES:
+        raise HTTPException(400, "La foto es muy grande (máximo 10 MB)")
+
+    old_blob = getattr(user, "avatar_blob", None)
+    blob_name = photos.upload_avatar(user.id, data, file.content_type)
+    store.update_profile(user.id, avatar_blob=blob_name)
+    if old_blob:
+        photos.delete_photo(old_blob)
+
+    return _user_out(store.get_user(user.id))
+
+
+@app.get("/api/avatars/{user_id}")
+def get_avatar(user_id: int, store: Store = Depends(get_store)):
+    """Sirve la foto de perfil. Público para que el navegador la cachee."""
+    target = store.get_user(user_id)
+    blob = getattr(target, "avatar_blob", None) if target else None
+    if not blob or not photos.enabled():
+        raise HTTPException(404, "Sin foto de perfil")
+    data, ctype = photos.download_photo(blob)
+    if data is None:
+        raise HTTPException(404, "Sin foto de perfil")
+    return Response(
+        content=data,
+        media_type=ctype,
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 # ============================================================
@@ -149,7 +282,7 @@ def change_password(payload: schemas.ChangePasswordIn, store: Store = Depends(ge
 def list_users(store: Store = Depends(get_store), user=Depends(get_current_user)):
     users = [u for u in store.list_users() if not getattr(u, "is_super", False)]
     users.sort(key=lambda u: u.username.lower())
-    return users
+    return [_user_out(u) for u in users]
 
 
 @app.post("/api/users/reset-password", status_code=204)
@@ -202,7 +335,7 @@ def _require_admin(game, user):
 def _run(store: Store, game_id: int, mutator):
     """Ejecuta una mutación transaccional y traduce errores a HTTPException."""
     try:
-        return _sorted_game(store.update_game(game_id, mutator))
+        return _refresh_users(_sorted_game(store.update_game(game_id, mutator)), store)
     except LookupError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
@@ -214,12 +347,12 @@ def _run(store: Store, game_id: int, mutator):
 @app.get("/api/games", response_model=list[schemas.GameOut])
 def list_games(status: str | None = None, store: Store = Depends(get_store), user=Depends(get_current_user)):
     statuses = status.split(",") if status else None
-    return [_sorted_game(g) for g in store.list_games(statuses)]
+    return [_refresh_users(_sorted_game(g), store) for g in store.list_games(statuses)]
 
 
 @app.get("/api/games/{game_id}", response_model=schemas.GameOut)
 def get_game(game_id: int, store: Store = Depends(get_store), user=Depends(get_current_user)):
-    return _with_photo_urls(_sorted_game(_load_game(store, game_id)))
+    return _with_photo_urls(_refresh_users(_sorted_game(_load_game(store, game_id)), store))
 
 
 @app.post("/api/games", response_model=schemas.GameOut, status_code=201)
@@ -234,7 +367,7 @@ def create_game(payload: schemas.GameCreate, store: Store = Depends(get_store), 
         raise HTTPException(400, "Ya hay una partida activa. Terminala o cancelala primero.")
 
     game = store.create_game(payload.game_type, user, payload.buy_in_amount)
-    return _sorted_game(game)
+    return _refresh_users(_sorted_game(game), store)
 
 
 @app.post("/api/games/{game_id}/join", response_model=schemas.GameOut)
@@ -323,7 +456,7 @@ def _resolve_buyin(store, game_id, buyin_id, user, new_status):
             if part and part.get("role") == "spectator" and part["position"] is None:
                 part["role"] = "player"
     try:
-        return _sorted_game(store.update_game(game_id, mut))
+        return _refresh_users(_sorted_game(store.update_game(game_id, mut)), store)
     except LookupError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
@@ -384,7 +517,7 @@ async def upload_game_photo(
             "uploaded_at": utcnow(),
         })
 
-    return _with_photo_urls(_sorted_game(store.update_game(game_id, mut)))
+    return _with_photo_urls(_refresh_users(_sorted_game(store.update_game(game_id, mut)), store))
 
 
 @app.delete("/api/games/{game_id}/photos/{photo_id}", response_model=schemas.GameOut)
@@ -407,7 +540,7 @@ def delete_game_photo(
     def mut(g):
         g["photos"] = [p for p in g.get("photos", []) if p["id"] != photo_id]
 
-    return _with_photo_urls(_sorted_game(store.update_game(game_id, mut)))
+    return _with_photo_urls(_refresh_users(_sorted_game(store.update_game(game_id, mut)), store))
 
 
 # ---------------- Retiros y eliminaciones ----------------

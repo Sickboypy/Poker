@@ -1,53 +1,49 @@
-# ♠ Mesa Final — Poker Tracker
+# Swarm Descent
 
-Web app multi-usuario para las noches de póquer con amigos, en modalidad
-**eliminación directa**: se juega hasta que queda un solo jugador en pie.
-Cada jugador entra desde su propio celular con su cuenta.
+Shooter espacial de horror en 3D para navegador y VR (Meta Quest), con
+cooperativo en red. Se despliega solo en Google Cloud Run cada vez que se
+hace push a `main`.
 
-## Cómo funciona una noche
+## Cómo jugar
 
-1. Cada jugador se registra una sola vez (usuario + contraseña + avatar)
-2. Alguien crea la partida → queda como **administrador** de esa noche
-   (puede fijar el valor de la caja para que la app calcule el pozo)
-3. Los demás ven la mesa abierta y se **sientan solos**
-4. El admin reparte (arranca la partida)
-5. Cada jugador pide **cajas (buy-ins)** desde su teléfono; el admin las
-   aprueba o rechaza; la app registra cuántas lleva cada uno
-6. Para salir: el jugador **pide retirarse** (el admin confirma) o el
-   admin lo **elimina** directamente cuando pierde
-7. El último en pie es el **campeón** 👑 (con confeti y fanfarria en
-   todos los teléfonos)
+1. Abrí la URL del servicio en el navegador (en el Quest: Meta Quest Browser).
+2. Escribí un **código de sala**. Todos los que juegan juntos usan el mismo
+   (por ejemplo `chanchito`). Sin código se entra a la sala `publica`.
+3. Elegí `swarm_coop.html` y tocá **ENTER VR**.
 
-Las pantallas se sincronizan solas cada pocos segundos.
+También se puede compartir el link directo:
+`https://LA-URL-DEL-SERVICIO/swarm_coop.html?sala=chanchito`
 
-## Correr localmente
+## Archivos
 
-```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+| Archivo | Para qué |
+|---|---|
+| `swarm_coop.html` | El juego completo (un solo archivo). |
+| `servidor_vr.py` | Sirve el juego y reenvía los mensajes de red entre jugadores. Solo usa la biblioteca estándar de Python. |
+| `Dockerfile` / `.dockerignore` | La imagen del contenedor. Solo copia el servidor y los `.html`. |
+| `.github/workflows/deploy.yml` | El pipeline: compila la imagen, la sube y despliega en Cloud Run. |
+
+## Despliegue (automático)
+
+Cada push a `main` despliega el servicio `swarm` en `southamerica-east1`
+(São Paulo, la región más cercana). Usa la misma autenticación y el mismo
+Artifact Registry que tenía la app de póquer: no hay que configurar nada nuevo.
+
+Configuración importante del servicio (está en `deploy.yml`):
+
+- `--timeout 3600`: las conexiones de red duran hasta 60 minutos; después
+  Cloud Run las corta y el juego se reconecta solo.
+- `--max-instances 1`: las salas viven en la memoria del servidor, así que
+  todos los jugadores tienen que caer en la misma instancia.
+- `--min-instances 0`: cuando nadie juega, no corre (y no cobra). El primero
+  en entrar espera unos segundos mientras arranca.
+
+## Jugar en la red local (sin Cloud Run)
+
+```
+python servidor_vr.py
 ```
 
-Desde cada celular en la misma WiFi: `http://IP-DE-TU-PC:8000`
-(escribir el `http://` explícito para que el navegador no fuerce HTTPS).
-
-API interactiva: http://localhost:8000/docs
-
-## Estructura
-
-```
-app/
-  main.py      # API FastAPI + registro de tipos de juego
-  auth.py      # Hash de contraseñas (PBKDF2) y sesiones con cookie
-  models.py    # User, Session, Game, GameParticipant, BuyIn
-  schemas.py   # Schemas Pydantic
-  database.py  # Motor SQLite
-static/        # Frontend (vanilla JS, mobile-first)
-```
-
-## Agregar un tipo de juego nuevo
-
-1. Sumarlo al diccionario `GAME_TYPES` en `app/main.py` con `available: True`
-2. Implementar su lógica de resultado (posiciones / balance / puntos)
-3. El frontend lo muestra automáticamente en "Modalidad"
+Sin la variable `PORT`, el servidor arranca en modo local: HTTPS en el
+puerto 8443 con un certificado autofirmado que genera solo la primera vez.
+Los visores entran a `https://IP-DE-TU-PC:8443/`.

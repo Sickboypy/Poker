@@ -1,16 +1,11 @@
+# Swarm Descent: servidor de juego (archivos + WebSocket) para Cloud Run.
+# Solo usa la biblioteca estándar de Python: no hay dependencias que instalar.
 FROM python:3.12-slim
-
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
-
+    PORT=8080
 WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app ./app
-COPY static ./static
-
-# Cloud Run inyecta el puerto en $PORT (por defecto 8080)
-ENV PORT=8080
-CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
+COPY servidor_vr.py *.html ./
+RUN useradd --no-create-home --uid 10001 juego
+USER juego
+EXPOSE 8080
+CMD ["python", "servidor_vr.py"]

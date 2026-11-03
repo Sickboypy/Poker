@@ -1,9 +1,5 @@
-__pycache__/
-*.pyc
-poker.db
-.venv/
-venv/
-.git/
-.gitignore
-README.md
-*.md
+# Lista blanca: a la imagen solo entra el servidor y los juegos
+# (nunca certificados .pem, ni la carpeta .git).
+*
+!servidor_vr.py
+!*.html

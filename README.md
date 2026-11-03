@@ -14,6 +14,31 @@ hace push a `main`.
 También se puede compartir el link directo:
 `https://LA-URL-DEL-SERVICIO/swarm_coop.html?sala=chanchito`
 
+Con fuego amigo: marcá la casilla **Fuego amigo** antes de entrar, o agregá
+`&ff=1` al link. Lo decide quien **crea** la sala; los que entran después
+juegan con lo que eligió el primero.
+
+## Cooperativo
+
+- El primero en entrar a la sala es el **anfitrión**: su visor simula los
+  enemigos, las salas, los barriles, los rayos del reactor y la Reina. Los
+  demás ven exactamente lo mismo y sus disparos cuentan igual.
+- Las balas enemigas se simulan en cada visor: esquivar no tiene demora.
+- Los enemigos atacan al jugador vivo más cercano (y prefieren al que los
+  está lastimando).
+- **Salas:** cuando uno entra, la sala se sella y el que quedó afuera aparece
+  adentro por una puerta.
+- **Caído:** si te destruyen, quedás a la deriva. Tu compañero te revive
+  quedándose cerca 3 segundos (volvés con medio casco). Si caen todos, se
+  pierde la partida.
+- **Pickups:** cada uno tiene su munición; un pickup es del primero que llega
+  y desaparece para todos.
+- **Fuego amigo** (opcional): la mitad del daño, con un tope de 50 por
+  impacto, así nadie cae de un solo tiro.
+- Si el anfitrión se va (o Cloud Run corta su conexión a los 60 minutos),
+  otro jugador pasa a ser el anfitrión y la partida sigue donde estaba.
+- Al terminar, cualquiera reinicia y recargan todos.
+
 ## Archivos
 
 | Archivo | Para qué |

@@ -164,7 +164,7 @@ async def read_frame(reader):
 #  Salas de juego: cada código de sala (?sala=...) es una partida aparte, con
 #  sus propios ids y su anfitrión. Sin código se entra a la sala "publica".
 # ---------------------------------------------------------------------------
-rooms = {}         # nombre -> {"clients": {id: StreamWriter}, "host": id}
+rooms = {}         # nombre -> {"clients": {id: StreamWriter}, "host": id, "ff": bool}
 next_id = 1
 ROOM_RE = re.compile(r"^[a-z0-9_-]{1,24}$")
 
@@ -172,6 +172,11 @@ ROOM_RE = re.compile(r"^[a-z0-9_-]{1,24}$")
 def room_name(query):
     raw = (urllib.parse.parse_qs(query).get("sala") or ["publica"])[0].strip().lower()
     return raw if ROOM_RE.match(raw) else None
+
+
+def friendly_fire(query):
+    # fuego amigo: lo decide el que CREA la sala (los que entran después heredan)
+    return (urllib.parse.parse_qs(query).get("ff") or ["0"])[0] == "1"
 
 
 def send(writer, obj):
@@ -196,18 +201,19 @@ def broadcast(room, obj, exclude=None):
             pass
 
 
-async def ws_session(reader, writer, name):
+async def ws_session(reader, writer, name, ff=False):
     global next_id
-    room = rooms.setdefault(name, {"clients": {}, "host": None})
+    room = rooms.setdefault(name, {"clients": {}, "host": None, "ff": ff})
     clients = room["clients"]
     cid = next_id
     next_id += 1
     clients[cid] = writer
     if room["host"] is None:
         room["host"] = cid
-    send(writer, {"t": "welcome", "id": cid, "host": room["host"], "n": len(clients), "sala": name})
+    send(writer, {"t": "welcome", "id": cid, "host": room["host"], "n": len(clients), "sala": name, "ff": room["ff"]})
     broadcast(room, {"t": "join", "id": cid, "n": len(clients)}, exclude=cid)
-    print("  [%s] Jugador %d conectado (%d en la sala)%s" % (name, cid, len(clients), " [anfitrion]" if room["host"] == cid else ""), flush=True)
+    print("  [%s] Jugador %d conectado (%d en la sala)%s%s" % (name, cid, len(clients), " [anfitrion]" if room["host"] == cid else "",
+                                                            " [fuego amigo]" if room["ff"] and len(clients) == 1 else ""), flush=True)
     frag, frag_op = None, None
     try:
         while True:
@@ -275,12 +281,16 @@ def index_page():
             "input{font:22px monospace;padding:10px;width:12em;background:#0d1422;color:#fff;border:1px solid #36f9f6}</style>"
             "<h1>Swarm Descent</h1>"
             "<p>Codigo de sala (el mismo para todos los que juegan juntos):<br><input id=sala maxlength=24 placeholder=publica></p>"
+            "<p><label><input type=checkbox id=ff style='width:auto;transform:scale(1.6);margin-right:12px'>Fuego amigo"
+            " <small>(vale para salas nuevas: lo decide quien la crea)</small></label></p>"
             "<p>Elegi un juego (swarm_coop.html = en red):</p><ul>%s</ul>"
-            "<script>const i=document.getElementById('sala');try{i.value=localStorage.getItem('sala')||''}catch(e){}"
+            "<script>const i=document.getElementById('sala'),ff=document.getElementById('ff');"
+            "try{i.value=localStorage.getItem('sala')||'';ff.checked=localStorage.getItem('ff')==='1'}catch(e){}"
             "const up=()=>{const v=i.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,'').slice(0,24);"
-            "try{localStorage.setItem('sala',v)}catch(e){}"
-            "document.querySelectorAll('a.g').forEach(a=>{a.href='/'+encodeURIComponent(a.dataset.f)+(v?'?sala='+v:'')})};"
-            "i.addEventListener('input',up);up();</script>" % items).encode()
+            "try{localStorage.setItem('sala',v);localStorage.setItem('ff',ff.checked?'1':'0')}catch(e){}"
+            "const q=[];if(v)q.push('sala='+v);if(ff.checked)q.push('ff=1');"
+            "document.querySelectorAll('a.g').forEach(a=>{a.href='/'+encodeURIComponent(a.dataset.f)+(q.length?'?'+q.join('&'):'')})};"
+            "i.addEventListener('input',up);ff.addEventListener('change',up);up();</script>" % items).encode()
 
 
 async def handle(reader, writer):
@@ -310,7 +320,7 @@ async def handle(reader, writer):
             accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
             writer.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                           "Sec-WebSocket-Accept: %s\r\n\r\n" % accept).encode())
-            await ws_session(reader, writer, name)
+            await ws_session(reader, writer, name, friendly_fire(parts.query))
             return
 
         head_only = method == "HEAD"

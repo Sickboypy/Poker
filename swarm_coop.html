@@ -132,6 +132,8 @@
         R: Reiniciar (tras morir/ganar) · ESC: Liberar ratón<br>
         ───── RED ─────<br>
         Todos entran a la misma dirección con el mismo código de sala<br>
+        Cooperativo: mismos enemigos · si caés, tu compañero te revive acercándose<br>
+        Los pickups son del primero que llega · Fuego amigo: lo elige quien crea la sala<br>
         ───── VR (Quest) ─────<br>
         Botón "ENTER VR" abajo · Gatillos: disparar (1 por mano)<br>
         Stick izq: mover · Stick der: girar / subir-bajar<br>
@@ -141,6 +143,7 @@
     <div id="fuel-label">BOOST</div>
     <div id="fuel-container"><div id="fuel-bar"></div></div>
     <div id="net-status" class="hud">RED: —</div>
+    <div id="coop-msg" class="hud" style="position:absolute;top:28%;left:50%;transform:translateX(-50%);font-size:22px;font-weight:bold;text-shadow:0 0 10px currentColor;z-index:12;display:none;text-align:center;white-space:nowrap"></div>
     <div id="health-label">CASCO</div>
     <div id="health-container"><div id="health-bar"></div></div>
     <div id="hit-overlay"></div>
@@ -932,6 +935,31 @@
     // =====================================================================
     //  INIT
     // =====================================================================
+    // =====================================================================
+    //  RED etapa 2 — partida compartida (estado global, ANTES de init)
+    // =====================================================================
+    const NET_WORLD_INTERVAL = 1 / 15;   // foto del mundo que manda el anfitrión
+    const REVIVE_DIST = 14, REVIVE_TIME = 3, REVIVE_HP = 50;
+    const FF_MUL = 0.5, FF_MAX = 50, FF_HIT_R = 2.6;  // fuego amigo: la mitad del daño, tope por impacto
+    const TEAM_PULL_DELAY = 2.0;         // s afuera de una sala sellada → te trae
+    const ENEMY_TYPE_NAMES = Object.keys(ENEMY_TYPES);
+    let netRole = 'solo';                // 'solo' | 'host' | 'guest'
+    let netFF = false;
+    let enemyNid = 0;
+    const enemyMap = new Map();          // nid → enemigo (o réplica en el invitado)
+    let netWorldT = 0, worldAdopted = false, lastWorld = null;
+    let downed = false, reviveP = 0;
+    const hitQueue = new Map(); let bossDmgQ = 0;
+    const ffQueue = new Map(); let ffRayAlong = 0;
+    let netEvents = [];
+    const coopTargets = [], coopPlayers = [];
+    const targetSlots = new Map();
+    const pullTimers = new Map();
+    let coopMsg = '', coopMsgCol = '#ffc15e', coopToast = '', coopToastT = 0;
+    let restarting = false;
+    const coopMsgEl = document.getElementById('coop-msg');
+    const _cTmp = new THREE.Vector3(), _cTmp2 = new THREE.Vector3();
+
     init();
     renderer.setAnimationLoop(animate);   // funciona en desktop y en WebXR
 
@@ -1450,14 +1478,13 @@
 
         let crit = false;
         if (opts.canCrit && Math.random() < CRIT_CHANCE) { dmg *= 2; crit = true; }
-        ud.health -= dmg;
 
         // Paso 5 — reacción: flash blanco + retroceso + deformación
         ud.flashTimer = opts.continuous ? 0.06 : 0.12;
         e.material.emissive.setHex(0xffffff);
         const mass = ud.T.scale * ud.T.scale;          // los grandes se mueven menos
         const push = Math.min(24, dmg * 0.12 + (opts.continuous ? 0 : 4));
-        ud.knock.addScaledVector(_hDir, push / mass);
+        if (!ud.proxy) ud.knock.addScaledVector(_hDir, push / mass);
         ud.flinch = opts.continuous ? Math.max(ud.flinch, 0.06) : 0.16;
 
         // Paso 4 — estallido de chispas atravesando al enemigo
@@ -1474,6 +1501,11 @@
         ud.numAccum += dmg;
         ud.numCrit = ud.numCrit || crit;
         if (ud.numCd <= 0) flushDamageNumber(e, opts.continuous ? 0.3 : 0.1);
+
+        // Invitado: el golpe se ve y se siente ya, pero el daño lo decide el anfitrión
+        if (ud.proxy) { queueNetHit(ud, dmg, opts); return false; }
+        ud.health -= dmg;
+        if (!opts.env) { ud.aggro = opts.shooter != null ? opts.shooter : myId(); ud.aggroT = 3; }
 
         // Paso 7 — secuela: quemadura
         if (opts.burn) {
@@ -1844,7 +1876,7 @@
             q.t -= dt;
             if (q.t > 0) continue;
             barrelQueue.splice(i, 1);
-            applySplashDamage(q.pos, 24, 140, { burn: { dps: 25, dur: 3 }, fire: true });
+            if (!q.vis) applySplashDamage(q.pos, 24, 140, { burn: { dps: 25, dur: 3 }, fire: true, env: true });
             spawnFireBurst(q.pos, 55, 1.4);
             sfxFireBoom(1);
             const d = q.pos.distanceTo(player.position);
@@ -1891,16 +1923,16 @@
             g.userData.glow.material.opacity = 0.25 + Math.sin(clock.elapsedTime * 9) * 0.08;
             _beamAxis.set(Math.cos(g.rotation.y), 0, -Math.sin(g.rotation.y));   // X local rotado en Y
             const half = g.userData.half;
-            if (!gameOver && distToSegment(player.position, g.position, _beamAxis, half, _beamPt) < 3.2) {
+            if (!gameOver && !downed && distToSegment(player.position, g.position, _beamAxis, half, _beamPt) < 3.2) {
                 g.userData.acc += 32 * dt;
                 if (g.userData.acc >= 8) { g.userData.acc = 0; damagePlayer(8, _beamPt); }
             }
             for (const ch of [arenaCh, bossChamber]) {
-                if (!ch) continue;
+                if (!ch || isGuest()) continue;   // a los enemigos los daña el anfitrión
                 for (let j = ch.enemies.length - 1; j >= 0; j--) {
                     const e = ch.enemies[j];
                     if (distToSegment(e.position, g.position, _beamAxis, half, null) < 3.5) {
-                        hitEnemy(e, ch.enemies, j, 45 * dt, e.position, null, { continuous: true, from: g.position });
+                        hitEnemy(e, ch.enemies, j, 45 * dt, e.position, null, { continuous: true, from: g.position, env: true });
                     }
                 }
             }
@@ -2116,7 +2148,7 @@
     function refreshNetStatus() {
         if (!net) return;
         if (!net.connected || net.id == null) { setNetStatus('RED: conectando…'); return; }
-        setNetStatus(`RED: sala "${netRoom}" · sos J${net.id}${net.host ? ' (anfitrión)' : ''} · ${net.n} en línea`);
+        setNetStatus(`RED: sala "${netRoom}" · sos J${net.id}${net.host ? ' (anfitrión)' : ''} · ${net.n} en línea${netFF ? ' · FUEGO AMIGO' : ''}`);
     }
 
     function connectNet() {
@@ -2125,11 +2157,15 @@
             return;
         }
         // sala: ?sala=codigo en la URL del juego (los que juegan juntos usan el mismo)
-        let sala = 'publica';
-        try { sala = (new URLSearchParams(location.search || '').get('sala') || 'publica').trim().toLowerCase(); } catch (e) {}
+        let sala = 'publica', wantFF = false;
+        try {
+            const qs = new URLSearchParams(location.search || '');
+            sala = (qs.get('sala') || 'publica').trim().toLowerCase();
+            wantFF = qs.get('ff') === '1';   // fuego amigo (solo cuenta si creás la sala)
+        } catch (e) {}
         if (!/^[a-z0-9_-]{1,24}$/.test(sala)) sala = 'publica';
         netRoom = sala;
-        const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?sala=' + encodeURIComponent(sala);
+        const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?sala=' + encodeURIComponent(sala) + (wantFF ? '&ff=1' : '');
         let ws;
         try { ws = new WebSocket(url); } catch (e) { scheduleNetRetry(); return; }
         const conn = { ws, id: null, host: false, n: 1, connected: false };
@@ -2147,6 +2183,8 @@
             if (net !== conn) return;
             net = null;
             for (const id of [...remotes.keys()]) removeRemote(id);
+            if (netRole === 'guest') promoteToHost();   // sin red: la partida sigue en tu visor
+            netRole = 'solo';
             setNetStatus(conn.connected ? 'RED: se cortó, reconectando…' : 'RED: sin servidor de red (reintentando)');
             scheduleNetRetry();
         };
@@ -2160,15 +2198,44 @@
     function onNetMessage(m) {
         switch (m.t) {
             case 'welcome':
-                net.id = m.id; net.host = m.host === m.id; net.n = m.n || 1;
+                net.id = m.id; net.host = m.host === m.id; net.n = m.n || 1; net.hostId = m.host;
+                netFF = !!m.ff;
+                if (net.host) { if (netRole === 'guest') promoteToHost(); netRole = 'host'; }
+                else { becomeGuest(); netRole = 'guest'; }
                 break;
             case 'join':
                 net.n = m.n || net.n;
+                netWorldT = 0;                     // foto del mundo ya para el que entra
                 break;
             case 'leave':
                 net.n = m.n || 1;
-                if (m.host != null) net.host = m.host === net.id;
+                if (m.host != null) { net.host = m.host === net.id; net.hostId = m.host; }
                 removeRemote(m.id);
+                if (net.host && netRole === 'guest') {
+                    promoteToHost(); netRole = 'host';
+                    toast('SE FUE EL ANFITRIÓN — SEGUÍS VOS');
+                }
+                break;
+            case 'w':
+                if (isGuest() && m.id === net.hostId) applyWorld(m);
+                break;
+            case 'ev':
+                if (isGuest() && m.id === net.hostId && Array.isArray(m.l)) applyEvents(m.l);
+                break;
+            case 'hit':
+                onRemoteHits(m);
+                break;
+            case 'dmg':
+                if (m.to === net.id) onNetDamage(m);
+                break;
+            case 'tp':
+                if (m.to === net.id && Array.isArray(m.p) && m.p.length === 3 && m.p.every(Number.isFinite)) arriveAt(_cTmp2.fromArray(m.p), 'TE TRAJERON A LA SALA');
+                break;
+            case 'pk':
+                if (Number.isInteger(m.i)) takePowerUp(m.i);
+                break;
+            case 'restart':
+                restartGame(true);
                 break;
             case 'st':
                 if (m.id != null && m.id !== net.id) applyRemoteState(m);
@@ -2201,6 +2268,7 @@
                       hp: Math.max(0, Math.round(playerHealth)), vr: vrActive ? 1 : 0 };
         if (vrActive && controller1 && controller2) { msg.l = poseOf(controller1); msg.r = poseOf(controller2); }
         if (gameOver) msg.dead = 1;
+        if (downed) { msg.dn = 1; msg.rv = r2(reviveP); }
         netSend(msg);
     }
 
@@ -2277,6 +2345,7 @@
             mats: [body, glowM, handMat, rayMat, engine.material, name.material],
             head: poseSlot(), hp: [poseSlot(), poseSlot()],
             last: netClock, has: false, vr: false, fl: 0, dead: false, w: 0,
+            vel: new THREE.Vector3(), vt: 0, dn: false, rv: 0,
         };
         remotes.set(id, av);
         return av;
@@ -2296,7 +2365,18 @@
         if (!Array.isArray(h) || h.length !== 7 || !h.every(Number.isFinite)) return;   // dato inválido: se ignora
         if (!Number.isInteger(m.id)) return;
         const av = remotes.get(m.id) || createRemote(m.id);
+        const had = av.head.has;
+        _cTmp.copy(av.head.tp);
         if (!readPose(m.h, av.head)) return;
+        // velocidad estimada (para que el francotirador también le anticipe)
+        const vdt = netClock - av.vt;
+        if (had && vdt > 0.02) {
+            av.vel.copy(av.head.tp).sub(_cTmp).divideScalar(vdt);
+            if (av.vel.lengthSq() > 150 * 150) av.vel.setLength(150);
+        }
+        av.vt = netClock;
+        av.dn = !!m.dn;
+        av.rv = Number.isFinite(m.rv) ? m.rv : 0;
         av.vr = !!m.vr;
         if (av.vr) { readPose(m.l, av.hp[0]); readPose(m.r, av.hp[1]); }
         av.fl = m.fl ? 1 : 0;
@@ -2314,6 +2394,7 @@
         av.mats.forEach(m => m.dispose());
         av.tex.dispose();
         remotes.delete(id);
+        targetSlots.delete(id);
         if (remoteFlashOwner === id) remoteFlashOwner = null;
     }
 
@@ -2384,7 +2465,13 @@
         if (net && net.connected && net.id != null) {
             netSendT -= dt;
             // arrastrar el sobrante (y tolerar redondeo): 20 Hz parejos con cualquier frame rate
-            if (netSendT <= 1e-6) { netSendT = Math.max(0, netSendT + NET_SEND_INTERVAL); sendState(); }
+            if (netSendT <= 1e-6) { netSendT = Math.max(0, netSendT + NET_SEND_INTERVAL); sendState(); flushNetQueues(); }
+        }
+        // anfitrión: primero los eventos del frame, después la foto del mundo
+        if (netEvents.length) { if (hostBroadcasting()) netSend({ t: 'ev', l: netEvents }); netEvents = []; }
+        if (hostBroadcasting()) {
+            netWorldT -= dt;
+            if (netWorldT <= 1e-6) { netWorldT = Math.max(0, netWorldT + NET_WORLD_INTERVAL); sendWorld(); }
         }
         // movimiento suave entre actualizaciones (llegan a 20 Hz, dibujamos a 72+)
         const k = 1 - Math.exp(-dt * 14);
@@ -2403,7 +2490,13 @@
                 sl.p.lerp(sl.tp, k); sl.q.slerp(sl.tq, k);
                 g.position.copy(sl.p); g.quaternion.copy(sl.q);
             }
-            av.mats[0].emissiveIntensity = av.dead ? 0.03 : 0.35;   // destruido: la nave se apaga
+            if (av.dn && !av.dead) {   // caído: titila en rojo hasta que lo revivan
+                av.mats[0].emissive.setHex(0xff2020);
+                av.mats[0].emissiveIntensity = Math.sin(netClock * 8) > 0 ? 0.8 : 0.15;
+            } else {
+                av.mats[0].emissive.setHex(av.color);
+                av.mats[0].emissiveIntensity = av.dead ? 0.03 : 0.35;   // destruido: la nave se apaga
+            }
         }
         updateRemoteFlashlight();
         for (const t of netTracers) {
@@ -2411,6 +2504,646 @@
             t.userData.life -= dt;
             t.material.opacity = Math.max(0, t.userData.life / 0.15) * 0.85;
             if (t.userData.life <= 0) t.visible = false;
+        }
+    }
+
+    // =====================================================================
+    //  RED — etapa 2: partida compartida (el anfitrión tiene la autoridad)
+    //  El anfitrión simula enemigos, salas, barriles, rayos y jefe; manda una
+    //  foto del mundo a 15 Hz más eventos (disparos enemigos, muertes,
+    //  ráfagas). El invitado dibuja esa foto, manda sus impactos al anfitrión
+    //  y simula las balas enemigas en su visor: esquivar no tiene demora.
+    //  Regla de oro: cada visor decide el daño que recibe SU nave.
+    // =====================================================================
+    function myId() { return net && net.id != null ? net.id : 0; }
+    function isGuest() { return netRole === 'guest'; }
+    function coopOn() { return !!(net && net.connected && net.id != null && net.n >= 2); }
+    function hostBroadcasting() { return netRole === 'host' && coopOn(); }
+    function r2(v) { return Math.round(v * 100) / 100; }
+    function partnerPresent() { for (const av of remotes.values()) if (av.has) return true; return false; }
+    function avAlive(av) { return av.has && !av.dead && !av.dn; }
+    function toast(txt) { coopToast = txt; coopToastT = txt ? 3 : 0; }
+    function chamberLeft(ch) { return ch.enemies.length + (ch.pending ? ch.pending.length : 0) + (ch.netPending || 0); }
+
+    // --- Objetivos de la IA: todos los jugadores (anfitrión) ---
+    function targetSlot(id) {
+        let s = targetSlots.get(id);
+        if (!s) { s = { id, pos: new THREE.Vector3(), vel: new THREE.Vector3(), alive: false, local: false }; targetSlots.set(id, s); }
+        return s;
+    }
+
+    // coopPlayers: todos (caídos incluidos: activan salas, se los trae)
+    // coopTargets: solo los vivos (a los caídos los enemigos los ignoran)
+    function buildCoopTargets() {
+        coopTargets.length = 0; coopPlayers.length = 0;
+        for (const s of targetSlots.values()) s.alive = false;
+        const me = targetSlot(myId());
+        me.local = true;
+        me.pos.copy(player.position); me.vel.copy(playerVelocity);
+        if (!gameOver) {
+            coopPlayers.push(me);
+            if (!downed && !victory) { me.alive = true; coopTargets.push(me); }
+        }
+        for (const av of remotes.values()) {
+            if (!av.has || av.dead) continue;
+            const s = targetSlot(av.id);
+            s.local = false;
+            s.pos.copy(av.head.tp); s.vel.copy(av.vel);
+            coopPlayers.push(s);
+            if (!av.dn) { s.alive = true; coopTargets.push(s); }
+        }
+    }
+
+    // El más cercano dentro de la sala; el que lo lastimó hace poco "pesa" más.
+    // Se reevalúa cada ~0.5 s para que no cambie de idea en cada frame.
+    function pickTarget(e, chamber, dt) {
+        const ud = e.userData;
+        if (ud.aggroT > 0) ud.aggroT -= dt;
+        ud.tgtT -= dt;
+        let tg = ud.tgtId != null ? targetSlots.get(ud.tgtId) : null;
+        if (tg && !tg.alive) tg = null;
+        if (!tg || ud.tgtT <= 0) {
+            ud.tgtT = 0.45 + Math.random() * 0.3;
+            const r = chamber.room;
+            let best = null, bestD = Infinity;
+            for (const t of coopTargets) {
+                if (r && !pointInRoom(r, t.pos, 4)) continue;
+                let d = e.position.distanceToSquared(t.pos);
+                if (ud.aggroT > 0 && t.id === ud.aggro) d *= 0.3;
+                if (d < bestD) { bestD = d; best = t; }
+            }
+            tg = best;
+            ud.tgtId = best ? best.id : null;
+        }
+        return tg;
+    }
+
+    // Daño de contacto: a vos directo; a tu compañero se lo avisa su visor
+    function hitTarget(tg, amount, src) {
+        if (tg.local) damagePlayer(amount, src);
+        else netSend({ t: 'dmg', to: tg.id, a: amount, s: [r2(src.x), r2(src.y), r2(src.z)] });
+    }
+
+    // --- Sala sellada: el que quedó afuera aparece adentro por una puerta ---
+    function teleportInto(r, p) {
+        if (!r.doors || !r.doors.length) return;
+        let best = r.doors[0], bd = Infinity;
+        for (const d of r.doors) {              // la puerta más cercana a donde está
+            doorCenter(r, d, _cTmp);
+            const dd = _cTmp.distanceToSquared(p.pos);
+            if (dd < bd) { bd = dd; best = d; }
+        }
+        doorCenter(r, best, _cTmp);
+        _cTmp[best.f[1]] += best.f[0] === '+' ? -10 : 10;   // 10u hacia adentro de la sala
+        if (p.local) arriveAt(_cTmp, 'TE TRAJERON A LA SALA');
+        else netSend({ t: 'tp', to: p.id, p: [r2(_cTmp.x), r2(_cTmp.y), r2(_cTmp.z)] });
+    }
+
+    function arriveAt(pos, msg) {
+        player.position.copy(pos);
+        playerVelocity.set(0, 0, 0);
+        _hTmp.set(0, 1, 0);
+        spawnSparks(player.position, _hTmp, 16, 0.5, 0.9, 1, 20);
+        sfxSeal(true);
+        if (msg) toast(msg);
+    }
+
+    function pullTeam(r) {
+        for (const p of coopPlayers) if (!pointInRoom(r, p.pos, 2)) teleportInto(r, p);
+    }
+
+    // Vigía: si alguien queda afuera de una sala sellada (entró tarde, se
+    // reconectó), a los 2 s lo trae. Así nadie queda encerrado afuera.
+    function updateTeamPull(dt) {
+        for (const k in ROOMS) {
+            const r = ROOMS[k];
+            if (!r.sealed) continue;
+            for (const p of coopPlayers) {
+                const key = k + ':' + p.id;
+                if (pointInRoom(r, p.pos, 2)) { pullTimers.delete(key); continue; }
+                const t = (pullTimers.get(key) || 0) + dt;
+                if (t >= TEAM_PULL_DELAY) { pullTimers.delete(key); teleportInto(r, p); }
+                else pullTimers.set(key, t);
+            }
+        }
+    }
+
+    // --- Caído / revivir / derrota conjunta ---
+    function goDown() {
+        downed = true; reviveP = 0; playerHealth = 0;
+        spawnExplosion(player.position, 0x66ccff);
+        sfxExplosion();
+        isBoosting = false; setBoostSound(false);
+        firingHeld = false;
+        cancelCharge(0); cancelCharge(1);
+        if (beamMesh) beamMesh.visible = false;
+        toast('');
+    }
+
+    function teamLoseLocal() {
+        downed = false; reviveP = 0;
+        if (gameOver) return;
+        gameOver = true; playerHealth = 0;
+        setBoostSound(false);
+        showEndScreen(false);
+    }
+
+    // Anfitrión: si no queda nadie en pie, se pierde la partida (para todos)
+    function checkTeamDown() {
+        if (!downed) return;
+        for (const av of remotes.values()) if (avAlive(av)) return;
+        teamLoseLocal();
+        if (hostBroadcasting()) netEvents.push(['lose']);
+    }
+
+    function updateCoop(dt) {
+        if (coopToastT > 0) coopToastT -= dt;
+        let msg = '', col = '#ffc15e';
+        if (downed && !gameOver) {
+            // te revive un compañero vivo que se quede cerca REVIVE_TIME segundos
+            let near = null;
+            for (const av of remotes.values()) {
+                if (avAlive(av) && av.head.p.distanceTo(player.position) < REVIVE_DIST) { near = av; break; }
+            }
+            if (near) reviveP += dt / REVIVE_TIME; else reviveP = Math.max(0, reviveP - dt * 0.5);
+            if (reviveP >= 1) {
+                downed = false; reviveP = 0; playerHealth = REVIVE_HP;
+                sfxPowerUp();
+                toast('¡DE VUELTA EN COMBATE!');
+            } else {
+                msg = near ? `J${near.id} TE ESTÁ REVIVIENDO… ${Math.round(reviveP * 100)}%` : 'CAÍDO — tu compañero tiene que acercarse';
+                col = '#ff5470';
+            }
+            // la nave queda a la deriva hasta frenar
+            playerVelocity.multiplyScalar(Math.exp(-3 * dt));
+            _v3.copy(playerVelocity).multiplyScalar(dt);
+            resolveCollisionsAndMove(_v3);
+        } else if (!gameOver && !victory) {
+            for (const av of remotes.values()) {
+                if (!av.has || av.dead || !av.dn) continue;
+                const d = av.head.p.distanceTo(player.position);
+                msg = d < REVIVE_DIST ? `REVIVIENDO A J${av.id}… ${Math.round((av.rv || 0) * 100)}%`
+                                      : `J${av.id} CAYÓ — acercate para revivirlo (${d | 0}u)`;
+                break;
+            }
+        }
+        if (!msg && coopToastT > 0 && coopToast) { msg = coopToast; col = '#8dff5a'; }
+        coopMsg = msg; coopMsgCol = col;
+        if (coopMsgEl) {
+            coopMsgEl.textContent = msg;
+            coopMsgEl.style.display = msg ? 'block' : 'none';
+            coopMsgEl.style.color = col;
+        }
+        if (!isGuest() && !gameOver && !victory) checkTeamDown();
+    }
+
+    // --- Pickups únicos: el primero que llega se lo lleva (desaparece para todos) ---
+    function checkPickups() {
+        if (downed || gameOver) return;
+        for (let i = 0; i < powerUps.length; i++) {
+            const p = powerUps[i];
+            if (!p.userData.active) continue;
+            if (player.position.distanceToSquared(p.position) < 9.0) {
+                applyPowerUp(p.userData.type);
+                takePowerUp(i);
+                netSend({ t: 'pk', i });
+            }
+        }
+    }
+
+    function takePowerUp(i) {
+        const p = powerUps[i];
+        if (!p || !p.userData.active) return;
+        p.userData.active = false;
+        p.visible = false;
+        p.userData.respawnTimer = POWERUP_RESPAWN;
+    }
+
+    // --- Fuego amigo (opcional por sala). Lo detecta el que dispara: lo que
+    // ves es lo que le pegás. El daño viaja como 'dmg' y lo aplica el otro. ---
+    function queueFF(av, amount, at) {
+        if (!netFF || !avAlive(av)) return;
+        // la mitad del daño y nunca más de FF_MAX por impacto: ningún arma voltea a un compañero sano de un tiro
+        ffQueue.set(av.id, (ffQueue.get(av.id) || 0) + Math.min(FF_MAX, amount * FF_MUL));
+        if (at) { _hTmp.set(0, 1, 0); spawnSparks(at, _hTmp, 6, 1, 0.5, 0.3, 16); }
+    }
+
+    function ffBulletHit(pos) {
+        for (const av of remotes.values()) {
+            if (avAlive(av) && pos.distanceToSquared(av.head.p) < FF_HIT_R * FF_HIT_R) return av;
+        }
+        return null;
+    }
+
+    // compañero más cercano cruzado por un rayo (o null); deja la distancia en ffRayAlong
+    function ffRay(origin, dir, maxDist) {
+        let best = null, bestAlong = maxDist;
+        for (const av of remotes.values()) {
+            if (!avAlive(av)) continue;
+            _cTmp.copy(av.head.p).sub(origin);
+            const along = _cTmp.dot(dir);
+            if (along <= 0 || along > bestAlong) continue;
+            if (_cTmp.lengthSq() - along * along < FF_HIT_R * FF_HIT_R) { best = av; bestAlong = along; }
+        }
+        ffRayAlong = bestAlong;
+        return best;
+    }
+
+    function ffRailgun(origin, dir, W) {   // perforante: a todos los del rayo
+        if (!netFF) return;
+        const rr = (FF_HIT_R + 1) * (FF_HIT_R + 1);
+        for (const av of remotes.values()) {
+            if (!avAlive(av)) continue;
+            _cTmp.copy(av.head.p).sub(origin);
+            const along = _cTmp.dot(dir);
+            if (along <= 0 || along > W.range) continue;
+            if (_cTmp.lengthSq() - along * along < rr) queueFF(av, W.dmg, av.head.p);
+        }
+    }
+
+    function ffSplash(pos, radius, dmg) {
+        for (const av of remotes.values()) {
+            if (!avAlive(av)) continue;
+            const d = av.head.p.distanceTo(pos);
+            if (d < radius) queueFF(av, dmg * Math.max(0.25, 1 - Math.max(0, d - 3) / radius), null);
+        }
+    }
+
+    function onNetDamage(m) {
+        if (m.ff && !netFF) return;
+        const a = +m.a;
+        if (!(a > 0)) return;
+        let src = null;
+        if (Array.isArray(m.s) && m.s.length === 3 && m.s.every(Number.isFinite)) src = _cTmp2.fromArray(m.s);
+        damagePlayer(Math.min(a, 200), src);
+    }
+
+    // --- Invitado → anfitrión: impactos agrupados (20 Hz) ---
+    function queueNetHit(ud, dmg, opts) {
+        let q = hitQueue.get(ud.nid);
+        if (!q) { q = [0, 0, 0, 0]; hitQueue.set(ud.nid, q); }
+        q[0] += dmg;
+        if (opts.continuous) q[1] = 1;
+        if (opts.burn) { q[2] = Math.max(q[2], opts.burn.dps); q[3] = Math.max(q[3], opts.burn.dur); }
+    }
+
+    function flushNetQueues() {
+        if (hitQueue.size || bossDmgQ > 0) {
+            const h = [];
+            for (const [nid, q] of hitQueue) h.push([nid, Math.round(q[0] * 10) / 10, q[1], q[2], q[3]]);
+            const m = { t: 'hit', h };
+            if (bossDmgQ > 0) m.b = Math.round(bossDmgQ * 10) / 10;
+            if (isGuest()) netSend(m);
+            hitQueue.clear(); bossDmgQ = 0;
+        }
+        if (ffQueue.size) {
+            camera.getWorldPosition(_cTmp);
+            for (const [id, a] of ffQueue) {
+                if (a >= 0.1) netSend({ t: 'dmg', to: id, a: Math.round(a * 10) / 10, s: [r2(_cTmp.x), r2(_cTmp.y), r2(_cTmp.z)], ff: 1 });
+            }
+            ffQueue.clear();
+        }
+    }
+
+    // Anfitrión: aplica los impactos del compañero como si fueran propios
+    function onRemoteHits(m) {
+        if (isGuest() || !Array.isArray(m.h)) return;
+        const av = remotes.get(m.id);
+        const from = av && av.has ? av.head.p : null;
+        for (const h of m.h) {
+            if (!Array.isArray(h) || h.length < 5) continue;
+            const e = enemyMap.get(h[0]);
+            const dmg = +h[1];
+            if (!e || !(dmg > 0) || e.userData.health <= 0) continue;
+            const ch = chambers[e.userData.ci];
+            const j = ch ? ch.enemies.indexOf(e) : -1;
+            if (j < 0) continue;
+            const bd = +h[3], bt = +h[4];
+            hitEnemy(e, ch.enemies, j, Math.min(dmg, 2000), e.position, null, {
+                from, continuous: !!h[2], shooter: m.id,
+                burn: bd > 0 && bt > 0 ? { dps: Math.min(bd, 100), dur: Math.min(bt, 10) } : null,
+            });
+        }
+        if (+m.b > 0) damageBoss(Math.min(+m.b, 5000));
+    }
+
+    // --- Anfitrión: foto del mundo ---
+    function sendWorld() {
+        const e = [], c = [];
+        for (let ci = 0; ci < chambers.length; ci++) {
+            const ch = chambers[ci];
+            c.push([(ch.activated ? 1 : 0) | (ch.cleared ? 2 : 0) | (ch.room && ch.room.sealed ? 4 : 0), ch.pending ? ch.pending.length : 0]);
+            for (const en of ch.enemies) {
+                const u = en.userData;
+                let st = (u.burnT > 0 ? 1 : 0) | (u.mode === 'charge' ? 2 : 0) | (u.windup > 0 ? 4 : 0) | (u.flashTimer > 0 ? 8 : 0);
+                if (u.laser) st |= Math.max(1, Math.round(u.laserK * 10)) << 4;   // mira láser: progreso 1..10
+                e.push([u.nid, ci, u.ti, r2(en.position.x), r2(en.position.y), r2(en.position.z), Math.ceil(u.health), st, u.tgtId || 0]);
+            }
+        }
+        let pu = 0;
+        powerUps.forEach((p, i) => { if (p.userData.active) pu |= 1 << i; });
+        const m = { t: 'w', e, c, sc: score, kl: kills, pu, bo: bossDefeatedOnce ? 1 : 0,
+                    hp: [r2(player.position.x), r2(player.position.y), r2(player.position.z)] };
+        if (bossActive && boss) m.b = [Math.ceil(bossState.hp), bossState.phase, bossState.shield ? 1 : 0,
+                                       r2(bossState.burstTimer), r2(bossState.shieldDownTimer), r2(bossState.spawnTimer)];
+        if (hazardBeams.length && hazardBeams[0].visible) m.hz = hazardBeams.map(g => r3(g.rotation.y));
+        if (victory) m.v = 1;
+        if (gameOver) m.go = 1;
+        netSend(m);
+    }
+
+    // --- Invitado: el mundo propio se descarta, se dibuja el del anfitrión ---
+    function disposeEnemyMesh(e) {
+        if (e.userData.laser) { releaseLaser(e.userData.laser); e.userData.laser = null; }
+        scene.remove(e);
+        e.material.dispose();
+    }
+
+    function becomeGuest() {
+        for (const ch of chambers) {
+            for (const e of ch.enemies) disposeEnemyMesh(e);
+            ch.enemies.length = 0;
+            if (ch.pending) { for (const e of ch.pending) disposeEnemyMesh(e); ch.pending.length = 0; }
+            ch.activated = !!ch.static; ch.cleared = false; ch.netPending = 0;
+        }
+        enemyMap.clear();
+        if (bossChamber) { const i = chambers.indexOf(bossChamber); if (i >= 0) chambers.splice(i, 1); bossChamber = null; }
+        if (boss) { scene.remove(boss); boss.geometry.dispose(); boss.material.dispose(); boss = null; }
+        bossActive = false; bossDefeatedOnce = false;
+        if (bossHealthBarEl) bossHealthBarEl.style.display = 'none';
+        for (const k in ROOMS) if (ROOMS[k].sealed) sealRoom(ROOMS[k], false);
+        for (const b of enemyBulletPool) if (b.userData.active) releaseBullet(b);
+        barrelQueue.length = 0;
+        hitQueue.clear(); bossDmgQ = 0;
+        worldAdopted = false; lastWorld = null;
+        if (victory) { victory = false; endScreenElement.style.display = 'none'; }
+    }
+
+    function removeProxy(e, list, j) {
+        list.splice(j, 1);
+        enemyMap.delete(e.userData.nid);
+        disposeEnemyMesh(e);
+    }
+
+    function applyWorld(m) {
+        if (!Array.isArray(m.e) || !Array.isArray(m.c) || m.e.length > 600) return;
+        lastWorld = m;
+        const firstTime = !worldAdopted;
+        worldAdopted = true;
+        if (m.b && !boss && !victory) spawnBoss(true);   // aparece la Reina también acá
+        for (let ci = 0; ci < m.c.length && ci < chambers.length; ci++) {
+            const ch = chambers[ci], row = m.c[ci];
+            if (!Array.isArray(row)) continue;
+            const f = row[0] | 0;
+            ch.netPending = row[1] | 0;
+            ch.activated = !!(f & 1); ch.cleared = !!(f & 2);
+            if (ch.room && !ch.persistent) { const want = !!(f & 4); if (ch.room.sealed !== want) sealRoom(ch.room, want); }
+        }
+        const seen = new Set();
+        for (const a of m.e) {
+            if (!Array.isArray(a) || a.length < 9) continue;
+            const nid = a[0], ci = a[1], x = a[3], y = a[4], z = a[5];
+            const ch = chambers[ci], tname = ENEMY_TYPE_NAMES[a[2]];
+            if (!ch || !tname || !Number.isInteger(nid) || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+            seen.add(nid);
+            let en = enemyMap.get(nid);
+            if (!en) {
+                en = makeEnemy(_cTmp.set(x, y, z), tname, ch.def.tier || 1);
+                enemyMap.delete(en.userData.nid);
+                en.userData.nid = nid; en.userData.ci = ci;
+                en.userData.proxy = true;
+                en.userData.np = new THREE.Vector3(x, y, z);
+                enemyMap.set(nid, en);
+                ch.enemies.push(en);
+                if (!firstTime && ch.activated && !ch.static) {   // sale de una rejilla
+                    _hTmp.set(0, 1, 0);
+                    spawnSparks(en.position, _hTmp, 10, 1, 0.55, 0.2, 18);
+                    sfxVent();
+                }
+            }
+            const u = en.userData;
+            u.np.set(x, y, z);
+            u.health = +a[6] || 0;
+            const old = u.netSt;
+            u.netSt = a[7] | 0;
+            u.netTg = a[8] | 0;
+            if ((u.netSt & 4) && !(old & 4)) sfxScreech();   // aviso de embestida
+        }
+        for (const ch of chambers) {
+            for (let j = ch.enemies.length - 1; j >= 0; j--) {
+                const en = ch.enemies[j];
+                if (!seen.has(en.userData.nid)) removeProxy(en, ch.enemies, j);
+            }
+        }
+        if (boss && Array.isArray(m.b)) {
+            bossState.hp = +m.b[0] || 0; bossState.phase = m.b[1] | 0 || 1; bossState.shield = !!m.b[2];
+            bossState.burstTimer = +m.b[3] || 0; bossState.shieldDownTimer = +m.b[4] || 0; bossState.spawnTimer = +m.b[5] || 0;
+        }
+        if (Array.isArray(m.hz)) m.hz.forEach((a, i) => { if (hazardBeams[i] && Number.isFinite(a)) hazardBeams[i].rotation.y = a; });
+        score = m.sc | 0; kills = m.kl | 0;
+        bossDefeatedOnce = !!m.bo;
+        if (Number.isInteger(m.pu)) powerUps.forEach((p, i) => { if (!(m.pu & (1 << i))) takePowerUp(i); });
+        if (firstTime && Array.isArray(m.hp) && m.hp.length === 3 && m.hp.every(Number.isFinite)) {
+            _cTmp.fromArray(m.hp);
+            if (player.position.distanceTo(_cTmp) > 40) arriveAt(_cTmp, `TE UNISTE A LA PARTIDA DE J${net.hostId}`);
+        }
+        if (m.go && !gameOver) teamLoseLocal();
+        if (m.v && !victory) { victory = true; setBoostSound(false); showEndScreen(true); }
+    }
+
+    function applyEvents(list) {
+        for (const ev of list) {
+            if (!Array.isArray(ev)) continue;
+            switch (ev[0]) {
+                case 'es': spawnNetEnemyBullet(ev); break;
+                case 'k': {
+                    const en = enemyMap.get(ev[1]);
+                    if (!en) break;
+                    const ch = chambers[en.userData.ci];
+                    const j = ch ? ch.enemies.indexOf(en) : -1;
+                    if (j < 0) break;
+                    en.userData.burnT = ev[2] ? 1 : 0;      // murió ardiendo → cenizas
+                    destroyEnemy(en, ch.enemies, j, false);
+                    break;
+                }
+                case 'bb':
+                    if (boss) {
+                        bossFireBurst();
+                        bossState.burstTimer = 4.5 - bossState.phase * 0.7;
+                        bossState.warned = false;
+                        boss.scale.setScalar(1);
+                        boss.material.emissive.setHex(0x660022);
+                    }
+                    break;
+                case 'bd': if (boss && !victory) { bossActive = true; defeatBoss(); } break;
+                case 'lose': if (!gameOver) teamLoseLocal(); break;
+            }
+        }
+    }
+
+    function spawnNetEnemyBullet(ev) {
+        if (ev.length < 11) return;
+        for (let k = 2; k <= 7; k++) if (!Number.isFinite(ev[k])) return;
+        const b = acquireBullet(enemyBulletPool);
+        if (!b) return;
+        const ud = b.userData;
+        b.position.set(ev[2], ev[3], ev[4]);
+        ud.velocity.set(ev[5], ev[6], ev[7]);
+        ud.lifetime = enemyBulletLifetime;
+        ud.damage = Math.max(0, Math.min(60, +ev[8] || 12));
+        ud.src.copy(b.position);
+        ud.trail = Math.max(0, Math.min(3, ev[9] | 0));
+        ud.active = true;
+        b.visible = true;
+        const col = ev[10] | 0;
+        b.material.color.setHex(col);
+        const en = enemyMap.get(ev[1]);
+        if (en) { en.userData.flashTimer = 0.07; en.material.emissive.setHex(col); }
+        _hTmp.copy(ud.velocity).normalize();
+        spawnSparks(b.position, _hTmp, 4, 1, 0.4, 0.45, 12);
+        sfxEnemyShoot();
+    }
+
+    // Invitado: las réplicas se deslizan hacia la última foto y muestran los avisos
+    function updateGuestWorld(dt) {
+        const k = 1 - Math.exp(-dt * 12);
+        let humLevel = 0, active = null;
+        for (const ch of chambers) {
+            const left = chamberLeft(ch);
+            if (!ch.static && !ch.cleared && left > 0) {
+                const hd = player.position.distanceTo(ch.room ? ch.room.center : ch.center);
+                humLevel = Math.max(humLevel, Math.max(0, Math.min(1, 1 - (hd - 50) / 220)) * (ch.activated ? 0.7 : 1));
+            }
+            if (!ch.static && !ch.persistent && ch.activated && !ch.cleared && ch.room && pointInRoom(ch.room, player.position, 10)) active = ch;
+            for (const e of ch.enemies) {
+                const u = e.userData, T = u.T, st = u.netSt | 0;
+                if (u.np) e.position.lerp(u.np, k);
+                if (T.behavior !== 'static') { e.rotation.y += 0.5 * dt; e.rotation.x += 0.3 * dt; }
+                // color según el estado que manda el anfitrión
+                if (u.flashTimer > 0) u.flashTimer -= dt;
+                else if (st & 8) e.material.emissive.setHex(0xffffff);
+                else if (st & 4) e.material.emissive.setHex(Math.sin(clock.elapsedTime * 60) > 0 ? 0xff2222 : 0x330000);
+                else if (st & 2) e.material.emissive.setHex(0xcc1111);
+                else if (st & 1) { const fl = 0.55 + Math.random() * 0.45; e.material.emissive.setRGB(fl, 0.3 * fl, 0.04 * fl); }
+                else e.material.emissive.setHex(u.baseEmissive);
+                if (st & 1 && Math.random() < dt * 18) {   // brasas
+                    const r = 2.2 * T.scale;
+                    emitParticle(fireFX, e.position.x + (Math.random() - 0.5) * r, e.position.y + (Math.random() - 0.5) * r, e.position.z + (Math.random() - 0.5) * r,
+                        (Math.random() - 0.5) * 2, 3 + Math.random() * 4, (Math.random() - 0.5) * 2, 1, 0.6, 0.2, 0.4, 1.5, -5);
+                }
+                // deformación por tus golpes
+                if (u.flinch > 0) {
+                    u.flinch -= dt;
+                    const f = Math.max(0, u.flinch) / 0.16;
+                    e.scale.set(T.scale * (1 + 0.28 * f), T.scale * (1 - 0.22 * f), T.scale * (1 + 0.28 * f));
+                    if (u.flinch <= 0) e.scale.setScalar(T.scale);
+                } else if (st & 4) e.scale.setScalar(T.scale * (1 + 0.22 * Math.abs(Math.sin(clock.elapsedTime * 45))));
+                else e.scale.setScalar(T.scale);
+                // mira láser del francotirador
+                const tk = (st >> 4) & 15;
+                if (tk > 0) {
+                    if (!u.laser) { u.laser = acquireLaser(); if (u.laser) sfxLock(); }
+                    if (u.laser) updateLaser(u.laser, e, tk / 10);
+                } else if (u.laser) { releaseLaser(u.laser); u.laser = null; }
+                if (u.numCd > 0) u.numCd -= dt;
+                if (u.numCd <= 0 && u.numAccum >= 1) flushDamageNumber(e, 0.1);
+            }
+        }
+        setSwarmHum(gameOver || victory ? 0 : humLevel);
+        updateHazards(dt);
+        updateObjectiveHUD(active);
+    }
+
+    // Se fue el anfitrión (o se cortó la red): las réplicas pasan a ser
+    // enemigos de verdad y la partida sigue desde donde estaba.
+    function promoteToHost() {
+        if (!worldAdopted) {
+            // nunca llegó la foto: partida nueva en este visor
+            for (const ch of chambers) {
+                if (ch.persistent) continue;
+                const ci = chambers.indexOf(ch);
+                if (ch.static) {
+                    if (!ch.enemies.length) BARREL_SPOTS.forEach(p => {
+                        const e = makeEnemy(new THREE.Vector3(p[0], p[1], p[2]), 'barrel', 1);
+                        e.userData.ci = ci; ch.enemies.push(e);
+                    });
+                    continue;
+                }
+                if (!ch.enemies.length && !ch.pending.length) { ch.activated = false; ch.cleared = false; refillChamber(ch, -1); }
+            }
+        } else {
+            let maxNid = enemyNid;
+            for (const ch of chambers) for (const e of ch.enemies) maxNid = Math.max(maxNid, e.userData.nid);
+            enemyNid = maxNid;   // los nuevos no chocan con los ids heredados
+            for (const ch of chambers) {
+                for (const e of ch.enemies) {
+                    const u = e.userData;
+                    if (u.np) e.position.copy(u.np);
+                    u.proxy = false; u.np = null;
+                    u.health = Math.max(1, Math.min(u.maxHealth, u.health));
+                    u.timeSinceLastShot = Math.random(); u.mode = 'orbit'; u.windup = 0; u.flashTimer = 0;
+                    e.scale.setScalar(u.T.scale);
+                    e.material.emissive.setHex(u.baseEmissive);
+                    if (u.laser) { releaseLaser(u.laser); u.laser = null; }
+                }
+                if (!ch.static && !ch.cleared && ch.netPending > 0) refillChamber(ch, ch.netPending);
+                if (ch.activated && ch.enemies.length) {
+                    ch.center.set(0, 0, 0);
+                    for (const e of ch.enemies) ch.center.add(e.position);
+                    ch.center.multiplyScalar(1 / ch.enemies.length);
+                }
+                ch.emergeT = 0.5; ch.netPending = 0;
+            }
+            if (boss && !victory) { bossActive = true; bossState.flashTimer = 0; }
+        }
+        hitQueue.clear(); bossDmgQ = 0;
+        worldAdopted = false; lastWorld = null;
+    }
+
+    // count < 0: composición completa; si no, 'count' enemigos al azar de la composición
+    function refillChamber(ch, count) {
+        const types = [];
+        for (const [t, n] of Object.entries(ch.def.composition)) for (let k = 0; k < n; k++) types.push(t);
+        if (!types.length) return;
+        const total = count < 0 ? types.length : count;
+        const ci = chambers.indexOf(ch);
+        const pts = makeSpawnPoints(ch.def.zone, total, ch.def.radius || 30);
+        for (let k = 0; k < total; k++) {
+            const t = count < 0 ? types[k] : types[Math.floor(Math.random() * types.length)];
+            const e = makeEnemy(pts[k], t, ch.def.tier);
+            e.visible = false; e.userData.ci = ci;
+            ch.pending.push(e);
+        }
+    }
+
+    // Reiniciar: en coop avisa a todos y todos recargan juntos
+    function restartGame(fromNet) {
+        if (restarting) return;
+        restarting = true;
+        if (!fromNet && coopOn()) netSend({ t: 'restart' });
+        setTimeout(() => {
+            if (net && net.ws) { try { net.ws.onclose = null; net.ws.close(); } catch (e) {} }
+            net = null;
+            location.reload();
+        }, 150);
+    }
+
+    function updateObjectiveHUD(active) {
+        const main = chambers.filter(c => !c.optional && !c.static && !c.persistent);
+        const doneMain = main.filter(c => c.cleared).length;
+        const target = mainObjective();
+        if (active) {
+            swarmInfoElement.textContent =
+                `▶ ${active.def.name}\n` +
+                `Enemigos: ${chamberLeft(active)}\n` +
+                `SALA SELLADA`;
+        } else if (target) {
+            swarmInfoElement.textContent =
+                `▶ OBJETIVO: ${target.def.name}\n` +
+                `Distancia: ${player.position.distanceTo(target.def.zone).toFixed(0)}u\n` +
+                `Salas limpias: ${doneMain}/${main.length}`;
+        } else {
+            swarmInfoElement.textContent = (bossActive || boss) ? '▶ LA REINA DEL ENJAMBRE' : '✓ SECTOR LIMPIO';
         }
     }
 
@@ -2452,7 +3185,12 @@
             numAccum: 0, numCrit: false, numCd: 0, numBurn: false, // números agrupados
             hitRadiusSq: (T.hitRadius * T.scale) * (T.hitRadius * T.scale),
             speedMul: T.speedMul * (1 + (tier - 1) * 0.08),
+            // --- red ---
+            nid: ++enemyNid, ci: -1, ti: ENEMY_TYPE_NAMES.indexOf(typeName),
+            aggro: 0, aggroT: 0, tgtId: null, tgtT: 0, laserK: 0,
+            proxy: false, np: null, netSt: 0, netTg: 0,
         };
+        enemyMap.set(e.userData.nid, e);
         scene.add(e);
         return e;
     }
@@ -2470,7 +3208,7 @@
             }
             const pts = makeSpawnPoints(def.zone, typeList.length, def.radius);
             // Todos esperan ocultos en las paredes hasta que entrás (emboscada)
-            const pending = typeList.map((t, k) => { const e = makeEnemy(pts[k], t, def.tier); e.visible = false; return e; });
+            const pending = typeList.map((t, k) => { const e = makeEnemy(pts[k], t, def.tier); e.visible = false; e.userData.ci = chambers.length; return e; });
             chambers.push({
                 def, enemies: [], pending, emergeT: 0, room: ROOMS[def.key],
                 center: def.zone.clone(), activated: false, cleared: false, index: idx,
@@ -2480,6 +3218,7 @@
         });
         // Barriles: "cámara" estática siempre activa (reciben daño como enemigos)
         const barrels = BARREL_SPOTS.map(p => makeEnemy(new THREE.Vector3(p[0], p[1], p[2]), 'barrel', 1));
+        barrels.forEach(e => { e.userData.ci = chambers.length; });
         chambers.push({
             def: { name: 'BARRILES', zone: ZONES.hangar, tier: 1, composition: {} },
             enemies: barrels, pending: [], center: ZONES.hangar.clone(),
@@ -2488,24 +3227,29 @@
     }
 
     function spawnEnemyInFront() {
+        if (isGuest()) return;
         const chamber = chambers.find(c => c.activated && !c.cleared && !c.static) || chambers[0];
         camera.getWorldDirection(_v1);
         const spawnPos = player.position.clone().add(_v1.multiplyScalar(80));
         const types = Object.keys(chamber.def.composition);
         const t = types[Math.floor(Math.random() * types.length)];
-        chamber.enemies.push(makeEnemy(spawnPos, t, chamber.def.tier));
+        const ne = makeEnemy(spawnPos, t, chamber.def.tier);
+        ne.userData.ci = chambers.indexOf(chamber);
+        chamber.enemies.push(ne);
         totalEnemies++;
     }
 
     function destroyEnemy(e, enemies, index, byPlayer) {
         const u = e.userData;
         if (u.laser) { releaseLaser(u.laser); u.laser = null; }
+        enemyMap.delete(u.nid);
+        if (hostBroadcasting()) netEvents.push(['k', u.nid, u.burnT > 0 ? 1 : 0]);
         if (u.type === 'barrel') {
             // barril: explota con un leve retardo → reacciones en cadena
             enemies.splice(index, 1);
             u.health = Math.min(u.health, 0);
             u.burnT = 0;
-            barrelQueue.push({ pos: e.position.clone(), t: 0.12 });
+            barrelQueue.push({ pos: e.position.clone(), t: 0.12, vis: !!u.proxy });   // réplica: solo efecto + daño a tu nave
             u.ash = true; u.dieT = u.dieMax = 0.25;
             dyingEnemies.push(e);
             return;
@@ -2539,7 +3283,7 @@
     // =====================================================================
     //  JEFE FINAL — La Reina del Enjambre
     // =====================================================================
-    function spawnBoss() {
+    function spawnBoss(fromNet) {
         bossActive = true;
         bossState.hp = BOSS_MAX_HP;
         bossState.phase = 1;
@@ -2590,7 +3334,7 @@
         shakeTime = 0.6; shakeMag = 0.5;
         sfxExplosion();
 
-        spawnBossBrood();   // primera tanda de crías
+        if (!fromNet) spawnBossBrood();   // primera tanda de crías (el invitado las recibe del anfitrión)
     }
 
     // Tipos de cría por fase (más duros a medida que baja la vida)
@@ -2603,12 +3347,14 @@
     function spawnBossBrood() {
         const types = broodTypesForPhase(bossState.phase);
         const pts = makeSpawnPoints(boss.position, types.length, 22);
-        types.forEach((t, k) => bossChamber.enemies.push(makeEnemy(pts[k], t, 3)));
+        const ci = chambers.indexOf(bossChamber);
+        types.forEach((t, k) => { const e = makeEnemy(pts[k], t, 3); e.userData.ci = ci; bossChamber.enemies.push(e); });
         totalEnemies += types.length;
     }
 
     // Ráfaga radial de proyectiles que el jugador debe esquivar
     function bossFireBurst() {
+        if (hostBroadcasting()) netEvents.push(['bb']);   // el patrón es fijo: cada uno la simula igual
         const n = 14 + bossState.phase * 4;
         for (let i = 0; i < n; i++) {
             const b = acquireBullet(enemyBulletPool);
@@ -2685,6 +3431,14 @@
 
     function damageBoss(amount) {
         if (!bossActive || bossState.shield) return;   // invulnerable con escudo
+        if (isGuest()) {   // invitado: se ve ya, el anfitrión descuenta
+            bossDmgQ += amount;
+            bossState.flashTimer = 0.12;
+            boss.material.emissive.setHex(0xffffff);
+            bossNumAccum += amount;
+            if (bossNumCd <= 0) flushBossNumber();
+            return;
+        }
         bossState.hp -= amount;
         bossState.flashTimer = 0.12;
         boss.material.emissive.setHex(0xffffff);
@@ -2698,6 +3452,7 @@
     }
 
     function defeatBoss() {
+        if (hostBroadcasting()) netEvents.push(['bd']);
         bossActive = false;
         for (let i = 0; i < 4; i++) {
             _v1.copy(boss.position).add(new THREE.Vector3(
@@ -2739,9 +3494,11 @@
             shakeTime = 0.4; shakeMag = 0.3;
         }
 
-        // --- Escudo ligado a las crías ---
+        // --- Escudo ligado a las crías (lo decide el anfitrión) ---
         const broodAlive = bossChamber.enemies.length;
-        if (broodAlive > 0) {
+        if (isGuest()) {
+            // el estado del escudo llega en la foto del mundo
+        } else if (broodAlive > 0) {
             bossState.shield = true;
             bossState.shieldDownTimer = 0;
             bossState.spawnTimer -= deltaTime;
@@ -2777,7 +3534,7 @@
             if (bossState.flashTimer <= 0) boss.material.emissive.setRGB(0.4 + 0.6 * k, 0.1 + 0.5 * k, 0.15 + 0.3 * k);
             if (!bossState.warned) { bossState.warned = true; sfxBossCharge(); }
         }
-        if (bossState.burstTimer <= 0) {
+        if (bossState.burstTimer <= 0 && !isGuest()) {   // el invitado espera el evento 'bb'
             bossFireBurst();
             bossState.burstTimer = 4.5 - bossState.phase * 0.7;
             bossState.warned = false;
@@ -2833,7 +3590,7 @@
             return;
         }
         if (event.code === 'KeyR' && (gameOver || victory)) {
-            location.reload();
+            restartGame();   // en coop reinician todos juntos
             return;
         }
         if (gameOver || victory) return;
@@ -3082,6 +3839,7 @@
             }
         }
         bossRayHit(dir, origin, W);   // el railgun también daña al jefe
+        ffRailgun(origin, dir, W);
         // Tracer visual: orientar con lookAt hacia el extremo del rayo (robusto)
         ensureRailTracer();
         railTracer.position.copy(origin);
@@ -3241,7 +3999,9 @@
         }
 
         // Dibujar el haz hasta el impacto (o alcance máximo)
-        const len = bossBeamDist !== Infinity ? bossBeamDist : (bestEnemy ? bestDist : W.range);
+        let len = bossBeamDist !== Infinity ? bossBeamDist : (bestEnemy ? bestDist : W.range);
+        const ffAv = netFF ? ffRay(_v2, _v1, len) : null;   // un compañero en el medio corta el haz
+        if (ffAv) { len = ffRayAlong; bossBeamDist = Infinity; bestEnemy = null; queueFF(ffAv, W.dmg * deltaTime, null); }
         beamMesh.position.copy(_v2);
         _railEnd.copy(_v2).addScaledVector(_v1, len);
         beamMesh.lookAt(_railEnd);            // +Z hacia el extremo (robusto)
@@ -3260,16 +4020,23 @@
     // Punto al que apunta un enemigo (con predicción si tiene leadAim).
     // Lo comparten el disparo y la mira láser, así el aviso es honesto.
     function computeAimPoint(enemy, out) {
-        const T = enemy.userData.T;
+        const ud = enemy.userData, T = ud.T;
+        let P = player.position, V = playerVelocity;   // a quién apunta (vos o tu compañero)
+        if (ud.proxy) {
+            if (ud.netTg && ud.netTg !== myId()) { const av = remotes.get(ud.netTg); if (av && av.has) { P = av.head.p; V = av.vel; } }
+        } else {
+            const tg = ud.tgtId != null ? targetSlots.get(ud.tgtId) : null;
+            if (tg && tg.alive) { P = tg.pos; V = tg.vel; }
+        }
         if (T.leadAim) {
-            let t = enemy.position.distanceTo(player.position) / T.bulletSpeed;
+            let t = enemy.position.distanceTo(P) / T.bulletSpeed;
             for (let k = 0; k < 2; k++) {
-                out.copy(player.position).addScaledVector(playerVelocity, t);
+                out.copy(P).addScaledVector(V, t);
                 t = enemy.position.distanceTo(out) / T.bulletSpeed;
             }
-            return out.copy(player.position).addScaledVector(playerVelocity, t);
+            return out.copy(P).addScaledVector(V, t);
         }
-        return out.copy(player.position);
+        return out.copy(P);
     }
 
     function fireEnemyBullet(enemy) {
@@ -3302,6 +4069,11 @@
         enemy.userData.flashTimer = 0.07;
         enemy.material.emissive.setHex(col);
         sfxEnemyShoot();
+        if (hostBroadcasting()) {   // cada visor simula esta bala y decide si le pega a SU nave
+            const v = b.userData.velocity;
+            netEvents.push(['es', enemy.userData.nid, r2(b.position.x), r2(b.position.y), r2(b.position.z),
+                            r2(v.x), r2(v.y), r2(v.z), T.bulletDmg, b.userData.trail, col]);
+        }
     }
 
     // FIX PERF: chequeo contra AABBs precomputados con distanceToPoint (barato)
@@ -3342,10 +4114,11 @@
                     // entero), después caída lineal; el empuje sale del centro
                     const falloff = 1 - Math.max(0, Math.sqrt(dSq) - 3) / radius;
                     hitEnemy(e, ch.enemies, j, dmg * Math.max(0.25, falloff), e.position, null,
-                             { from, burn: opts.burn, sparks: 5 });
+                             { from, burn: opts.burn, sparks: 5, env: opts.env });
                 }
             }
         }
+        if (opts.ff && netFF) ffSplash(from, radius, dmg);
         if (!opts.fire) spawnExplosion(from, 0xffcc66);
     }
 
@@ -3354,12 +4127,12 @@
         if (ud.fire) {
             // Paso 4+6 del Incinerador: estallido de fuego + boom
             const c = ud.charge || 0.5;
-            applySplashDamage(b.position, ud.splash, ud.damage, { burn: ud.burn, fire: true });
+            applySplashDamage(b.position, ud.splash, ud.damage, { burn: ud.burn, fire: true, ff: true });
             spawnFireBurst(b.position, Math.round(28 + 32 * c), 0.7 + 0.6 * c);
             sfxFireBoom(c);
             if (b.position.distanceToSquared(player.position) < 60 * 60) { shakeTime = 0.2; shakeMag = 0.12 + 0.12 * c; }
         } else if (ud.splash > 0) {
-            applySplashDamage(b.position, ud.splash, ud.damage);
+            applySplashDamage(b.position, ud.splash, ud.damage, { ff: true });
             sfxExplosion();
         }
         releaseBullet(b);
@@ -3399,6 +4172,16 @@
 
             if (ud.lifetime <= 0) { detonateBullet(b); continue; }
             if (bulletHitsWall(b.position)) { detonateBullet(b); continue; }
+
+            // Fuego amigo (si la sala lo tiene): tus balas le pegan a tu compañero
+            if (netFF && remotes.size) {
+                const av = ffBulletHit(b.position);
+                if (av) {
+                    if (ud.splash > 0 || ud.fire) detonateBullet(b);
+                    else { queueFF(av, ud.damage, b.position); sfxHit(false); releaseBullet(b); }
+                    continue;
+                }
+            }
 
             // Colisión con el JEFE (cuerpo o escudo)
             if (bossActive && bossHitTest(b.position, 0.3, ud.damage, ud.velocity)) {
@@ -3458,7 +4241,7 @@
 
     // src: de dónde vino el daño (indicador de dirección, chispas, empujón)
     function damagePlayer(amount, src) {
-        if (gameOver) return;
+        if (gameOver || downed || victory) return;
         playerHealth -= amount;
         sfxPlayerHit();
         hitOverlayElement.style.opacity = 1;
@@ -3484,6 +4267,7 @@
         }
         if (playerHealth <= 0) {
             playerHealth = 0;
+            if (coopOn() && partnerPresent()) { goDown(); return; }   // coop: quedás caído
             gameOver = true;
             spawnExplosion(player.position, 0x66ccff);
             sfxExplosion();
@@ -3555,16 +4339,7 @@
         }
         player.quaternion.copy(currentOrientation).normalize();
 
-        // Power-ups
-        for (const p of powerUps) {
-            if (!p.userData.active) continue;
-            if (player.position.distanceToSquared(p.position) < 9.0) {
-                applyPowerUp(p.userData.type);
-                p.userData.active = false;
-                p.visible = false;
-                p.userData.respawnTimer = POWERUP_RESPAWN;
-            }
-        }
+        checkPickups();   // power-ups: el primero que llega se lo lleva
     }
 
     function updatePowerUps(deltaTime) {
@@ -3674,6 +4449,7 @@
     //  actual es la primera cámara de combate sin limpiar.
     // =====================================================================
     function updateEnemies(deltaTime) {
+        if (isGuest()) { updateGuestWorld(deltaTime); return; }   // el mundo lo simula el anfitrión
         let active = null;
         let humLevel = 0;
         for (const ch of chambers) {
@@ -3682,12 +4458,19 @@
             const r = ch.room;
             const inside = r ? pointInRoom(r, player.position, 10)
                              : player.position.distanceTo(ch.center) < activationDistance;
+            // cualquier jugador adentro (vos o tu compañero) activa y retiene la sala
+            let insideP = null;
+            for (const p of coopPlayers) {
+                if (r ? pointInRoom(r, p.pos, 10) : p.pos.distanceTo(ch.center) < activationDistance) {
+                    if (!insideP || p.pos.distanceToSquared(ch.center) < insideP.pos.distanceToSquared(ch.center)) insideP = p;
+                }
+            }
 
-            // Activación al ENTRAR a la sala: se sella y arranca la emboscada
-            if (!ch.activated && inside) {
+            // Activación al ENTRAR a la sala: se sella, trae al que quedó afuera y arranca la emboscada
+            if (!ch.activated && insideP) {
                 ch.activated = true;
                 ch.emergeT = 0.4;
-                if (r && !ch.persistent) { sealRoom(r, true); rescueStragglers(ch); }
+                if (r && !ch.persistent) { sealRoom(r, true); rescueStragglers(ch); pullTeam(r); }
             }
 
             // Zumbido del enjambre: lo oís antes de verlo
@@ -3702,9 +4485,9 @@
 
             // Correa territorial: el centro del enjambre sigue al jugador solo
             // dentro de su sala; si el jugador no está, vuelve al nido.
-            ch.engaged = inside || !r;
+            ch.engaged = !!insideP || !r;
             if (r) {
-                if (inside) clampToRoom(r, _v2.copy(player.position), 12);
+                if (insideP) clampToRoom(r, _v2.copy(insideP.pos), 12);
                 else _v2.copy(ch.def.zone);
             } else {
                 _v2.copy(player.position);
@@ -3726,24 +4509,8 @@
         }
         setSwarmHum(gameOver || victory ? 0 : humLevel);
         updateHazards(deltaTime);
-
-        // HUD de objetivo
-        const main = chambers.filter(c => !c.optional && !c.static && !c.persistent);
-        const doneMain = main.filter(c => c.cleared).length;
-        const target = mainObjective();
-        if (active) {
-            swarmInfoElement.textContent =
-                `▶ ${active.def.name}\n` +
-                `Enemigos: ${active.enemies.length + (active.pending ? active.pending.length : 0)}\n` +
-                `SALA SELLADA`;
-        } else if (target) {
-            swarmInfoElement.textContent =
-                `▶ OBJETIVO: ${target.def.name}\n` +
-                `Distancia: ${player.position.distanceTo(target.def.zone).toFixed(0)}u\n` +
-                `Salas limpias: ${doneMain}/${main.length}`;
-        } else {
-            swarmInfoElement.textContent = bossActive ? '▶ LA REINA DEL ENJAMBRE' : '✓ SECTOR LIMPIO';
-        }
+        updateTeamPull(deltaTime);
+        updateObjectiveHUD(active);
     }
 
     function updateSwarm(chamber, deltaTime) {
@@ -3770,15 +4537,18 @@
             if (updateEnemyImpact(e, enemies, i, deltaTime)) continue;
             if (T.behavior === 'static') continue;   // barriles: no se mueven ni atacan
 
-            const distToPlayerSq = e.position.distanceToSquared(player.position);
+            // Objetivo: el jugador vivo más cercano dentro de su sala (prefiere al que lo lastimó)
+            const tg = pickTarget(e, chamber, deltaTime);
+            const P = tg ? tg.pos : swarmCenter;
+            const distToPlayerSq = e.position.distanceToSquared(P);
             const dist = Math.sqrt(distToPlayerSq);
             let speed = enemyBaseSpeed * ud.speedMul;
-            const engaged = chamber.engaged !== false;   // el jugador está en su sala
+            const engaged = chamber.engaged !== false && !!tg;   // hay alguien vivo en su sala
 
             // --- Determinar destino (_v3) según comportamiento ---
             if (engaged && T.behavior === 'rush') {
                 // DRON: siempre directo al jugador, rapidísimo
-                _v3.copy(player.position);
+                _v3.copy(P);
                 speed = enemyBaseSpeed * ud.speedMul;
             } else if (engaged && T.behavior === 'standoff') {
                 // FRANCOTIRADOR: kiting. Mantiene una distancia ideal (~160u):
@@ -3787,7 +4557,7 @@
                 // no ser un blanco quieto.
                 const ideal = 160;
                 // Componente radial (acercarse / alejarse)
-                _v2.copy(player.position).sub(e.position);
+                _v2.copy(P).sub(e.position);
                 const d = _v2.length() || 1;
                 _v2.multiplyScalar(1 / d);            // dirección hacia el jugador (normalizada)
                 let radial = 0;
@@ -3803,7 +4573,7 @@
             } else if (T.behavior === 'support') {
                 // SANADOR: se posiciona del lado opuesto al jugador respecto al
                 // centro del enjambre (se esconde detrás del grupo) y cura.
-                _v2.copy(swarmCenter).sub(player.position).normalize().multiplyScalar(45);
+                _v2.copy(swarmCenter).sub(P).normalize().multiplyScalar(45);
                 _v3.copy(swarmCenter).add(_v2);
                 for (let j = 0; j < enemies.length; j++) {
                     if (j === i) continue;
@@ -3827,8 +4597,8 @@
                         if (ud.chargeTimer <= 0) { ud.mode = 'orbit'; e.material.emissive.setHex(ud.baseEmissive); }
                     }
                 }
-                if (ud.mode === 'charge' && !gameOver) {
-                    _v3.copy(player.position);
+                if (ud.mode === 'charge' && tg) {
+                    _v3.copy(P);
                     if (ud.windup > 0) {
                         // Aviso (paso 1): se frena, tiembla y destella antes de embestir
                         ud.windup -= deltaTime;
@@ -3887,21 +4657,21 @@
 
             // --- Daño por contacto (drones y kamikazes explotan al chocar) ---
             const contactRange = 16.0 * T.scale;
-            if (!gameOver && distToPlayerSq < contactRange) {
-                damagePlayer(T.contactDmg, e.position);
+            if (tg && distToPlayerSq < contactRange) {
+                hitTarget(tg, T.contactDmg, e.position);
                 destroyEnemy(e, enemies, i, false);
                 continue;
             }
 
             // --- Disparo (solo tipos con fireRate > 0) ---
-            const canShoot = !gameOver && engaged && T.fireRate > 0 && distToPlayerSq < T.fireDist * T.fireDist;
+            const canShoot = !gameOver && tg && engaged && T.fireRate > 0 && distToPlayerSq < T.fireDist * T.fireDist;
             if (canShoot) {
                 ud.timeSinceLastShot += deltaTime;
                 const toFire = T.fireRate - ud.timeSinceLastShot;
                 // Aviso del francotirador: mira láser que se afina antes del tiro
                 if (T.telegraph && toFire <= T.telegraph) {
                     if (!ud.laser) { ud.laser = acquireLaser(); if (ud.laser) sfxLock(); }
-                    if (ud.laser) updateLaser(ud.laser, e, 1 - Math.max(0, toFire) / T.telegraph);
+                    if (ud.laser) { ud.laserK = 1 - Math.max(0, toFire) / T.telegraph; updateLaser(ud.laser, e, ud.laserK); }
                 }
                 // Aviso del tanque: se enciende con su color antes de disparar
                 if (T.glowWarn && toFire <= T.glowWarn && ud.flashTimer <= 0 && ud.burnT <= 0) {
@@ -4200,6 +4970,10 @@
             ctx.fillText(`${net.host ? '★' : ''}J${net.id} · ${net.n}P`, 488, 80);
             ctx.textAlign = 'left';
         }
+        if (coopMsg) {   // caído / revivir / traslado
+            ctx.fillStyle = coopMsgCol; ctx.font = 'bold 18px "Courier New", monospace';
+            ctx.fillText(coopMsg.slice(0, 42), 28, 108);
+        }
 
         // Barra de CASCO (salud)
         drawHudBar(ctx, 28, 134, 456, 26, playerHealth / maxHealth,
@@ -4237,9 +5011,10 @@
     function onVRTrigger(hand) {
         initAudio();
         if (gameOver || victory) {
-            location.reload();   // reiniciar la partida desde VR
+            restartGame();   // reiniciar la partida desde VR (en coop, todos)
             return;
         }
+        if (downed) return;
         if (WEAPONS[currentWeapon].kind === 'charge') return;   // se lanza al SOLTAR
         fireFromHand(hand);
     }
@@ -4304,6 +5079,7 @@
             }
         }
         bossRayHit(dir, origin, W);
+        ffRailgun(origin, dir, W);
         ensureRailTracer();
         railTracer.position.copy(origin);
         _railEnd.copy(origin).addScaledVector(dir, W.range);
@@ -4323,7 +5099,7 @@
     function updateVRInput(deltaTime) {
         const session = renderer.xr.getSession();
         if (!session) return;
-        if (gameOver || victory) return;   // partida terminada: solo el gatillo reinicia
+        if (gameOver || victory || downed) return;   // terminada o caído: no se maneja
         vrMove.x = 0; vrMove.z = 0; vrMove.turn = 0; vrMove.up = 0;
         vrBoost = false;
         let leftTrigger = 0, rightTrigger = 0;
@@ -4405,15 +5181,7 @@
         handleVRFire(1, rightTrigger, deltaTime);
 
         // --- Recoger power-ups (igual que en desktop) ---
-        for (const p of powerUps) {
-            if (!p.userData.active) continue;
-            if (player.position.distanceToSquared(p.position) < 9.0) {
-                applyPowerUp(p.userData.type);
-                p.userData.active = false;
-                p.visible = false;
-                p.userData.respawnTimer = POWERUP_RESPAWN;
-            }
-        }
+        checkPickups();
     }
 
     function handleVRFire(hand, trigger, deltaTime) {
@@ -4491,7 +5259,9 @@
             }
         }
         ensureBeamMesh();
-        const len = bestDist;
+        let len = bestDist;
+        const ffAv = netFF ? ffRay(_ctrlPos, _ctrlDir, len) : null;
+        if (ffAv) { len = ffRayAlong; bossBeam = false; bestEnemy = null; queueFF(ffAv, W.dmg * deltaTime, null); }
         beamMesh.position.copy(_ctrlPos);
         _railEnd.copy(_ctrlPos).addScaledVector(_ctrlDir, len);
         beamMesh.lookAt(_railEnd);
@@ -4534,7 +5304,7 @@
                 // En VR el movimiento y el disparo los maneja updateVRInput()
                 // (ya llamado arriba). No corremos los controles de desktop.
                 if (W.kind !== 'beam' && beamMesh) beamMesh.visible = false;
-            } else {
+            } else if (!downed) {
                 updatePlayer(deltaTime);
                 // --- Disparo del jugador según arma y cadencia (desktop) ---
                 if (W.kind !== 'charge' && chargeState[0].on) cancelCharge(0);   // cambió de arma
@@ -4570,6 +5340,7 @@
 
             updatePlayerBullets(deltaTime);
             updateEnemyBullets(deltaTime);
+            if (!isGuest()) buildCoopTargets();
             updateEnemies(deltaTime);
             updateBoss(deltaTime);
             updatePowerUps(deltaTime);
@@ -4583,7 +5354,7 @@
             // Al limpiar el mega-enjambre aparece el JEFE (una sola vez).
             // La victoria real ocurre al derrotarlo (en defeatBoss()).
             const arenaCh = chambers.find(c => c.def.arena);
-            if (arenaCh && arenaCh.cleared && !bossActive && !boss && !victory && !bossDefeatedOnce) {
+            if (arenaCh && arenaCh.cleared && !bossActive && !boss && !victory && !bossDefeatedOnce && !isGuest()) {
                 bossDefeatedOnce = true;   // evita re-spawn
                 spawnBoss();
             }
@@ -4592,6 +5363,7 @@
         updateExplosions(deltaTime);
         updateImpactFX(deltaTime);
         updateNet(deltaTime);
+        updateCoop(deltaTime);
         // partida terminada a mitad de una carga → apagar orbe y zumbido
         if ((gameOver || victory) && (chargeState[0].on || chargeState[1].on)) { cancelCharge(0); cancelCharge(1); }
 

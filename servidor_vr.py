@@ -174,6 +174,12 @@ def room_name(query):
     return raw if ROOM_RE.match(raw) else None
 
 
+def map_choice(query):
+    # mapa de la sala: lo fija el que la CREA (1 = El Descenso, 2 = La Colmena)
+    raw = (urllib.parse.parse_qs(query).get("mapa") or ["1"])[0]
+    return 2 if raw == "2" else 1
+
+
 def friendly_fire(query):
     # fuego amigo: lo decide el que CREA la sala (los que entran después heredan)
     return (urllib.parse.parse_qs(query).get("ff") or ["0"])[0] == "1"
@@ -201,16 +207,16 @@ def broadcast(room, obj, exclude=None):
             pass
 
 
-async def ws_session(reader, writer, name, ff=False):
+async def ws_session(reader, writer, name, ff=False, mapa=1):
     global next_id
-    room = rooms.setdefault(name, {"clients": {}, "host": None, "ff": ff})
+    room = rooms.setdefault(name, {"clients": {}, "host": None, "ff": ff, "mapa": mapa})
     clients = room["clients"]
     cid = next_id
     next_id += 1
     clients[cid] = writer
     if room["host"] is None:
         room["host"] = cid
-    send(writer, {"t": "welcome", "id": cid, "host": room["host"], "n": len(clients), "sala": name, "ff": room["ff"]})
+    send(writer, {"t": "welcome", "id": cid, "host": room["host"], "n": len(clients), "sala": name, "ff": room["ff"], "mapa": room["mapa"]})
     broadcast(room, {"t": "join", "id": cid, "n": len(clients)}, exclude=cid)
     print("  [%s] Jugador %d conectado (%d en la sala)%s%s" % (name, cid, len(clients), " [anfitrion]" if room["host"] == cid else "",
                                                             " [fuego amigo]" if room["ff"] and len(clients) == 1 else ""), flush=True)
@@ -246,6 +252,11 @@ async def ws_session(reader, writer, name, ff=False):
             if not isinstance(msg, dict) or not isinstance(msg.get("t"), str) or msg["t"] == "hello":
                 continue
             msg["id"] = cid                                 # quién lo mandó (no se puede falsificar)
+            if msg["t"] == "ff":                            # fuego amigo: solo lo cambia el anfitrión
+                if cid != room["host"]:
+                    continue
+                room["ff"] = bool(msg.get("on"))
+                msg = {"t": "ff", "on": 1 if room["ff"] else 0, "id": cid}
             broadcast(room, msg, exclude=cid)
     except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, ssl.SSLError, OSError, ValueError):
         pass
@@ -282,7 +293,7 @@ def index_page():
             "<h1>Swarm Descent</h1>"
             "<p>Codigo de sala (el mismo para todos los que juegan juntos):<br><input id=sala maxlength=24 placeholder=publica></p>"
             "<p><label><input type=checkbox id=ff style='width:auto;transform:scale(1.6);margin-right:12px'>Fuego amigo"
-            " <small>(vale para salas nuevas: lo decide quien la crea)</small></label></p>"
+            " <small>(también se cambia adentro del juego con la tecla G)</small></label></p>"
             "<p>Elegi un juego (swarm_coop.html = en red):</p><ul>%s</ul>"
             "<script>const i=document.getElementById('sala'),ff=document.getElementById('ff');"
             "try{i.value=localStorage.getItem('sala')||'';ff.checked=localStorage.getItem('ff')==='1'}catch(e){}"
@@ -320,7 +331,7 @@ async def handle(reader, writer):
             accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
             writer.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                           "Sec-WebSocket-Accept: %s\r\n\r\n" % accept).encode())
-            await ws_session(reader, writer, name, friendly_fire(parts.query))
+            await ws_session(reader, writer, name, friendly_fire(parts.query), map_choice(parts.query))
             return
 
         head_only = method == "HEAD"

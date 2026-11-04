@@ -14,9 +14,27 @@ hace push a `main`.
 También se puede compartir el link directo:
 `https://LA-URL-DEL-SERVICIO/swarm_coop.html?sala=chanchito`
 
-Con fuego amigo: marcá la casilla **Fuego amigo** antes de entrar, o agregá
-`&ff=1` al link. Lo decide quien **crea** la sala; los que entran después
-juegan con lo que eligió el primero.
+**Fuego amigo:** el anfitrión lo prende o apaga cuando quiera: con la
+casilla de la pantalla de inicio del juego, la tecla **G**, o el clic del
+stick izquierdo en VR. Vale para todos los de la sala, incluidos los que
+entren después. También se puede crear la sala con fuego amigo agregando
+`&ff=1` al link.
+
+## Mapas
+
+Al entrar, el juego pregunta qué mapa jugar:
+
+- **Mapa 1 · El Descenso:** bajás sala por sala hasta el reactor y la Reina.
+- **Mapa 2 · La Colmena:** un pozo central gigante con turbinas giratorias y
+  tres ramas que se juegan en el orden que quieras: la Fundición (barriles y
+  tanques), el Invernadero (se corta la luz) y la Galería (francotiradores,
+  con un Arsenal opcional). Cada rama limpia activa un relé, que frena una
+  turbina, y al volver al pozo te espera una oleada mayor. Con los 3 relés se
+  abre la membrana del nido, arriba de todo, donde está la Reina.
+
+El link directo con mapa: `swarm_coop.html?sala=chanchito&mapa=2`. En
+cooperativo, el mapa lo fija quien crea la sala; si alguien entra con el
+otro, el juego lo pasa solo al mapa correcto.
 
 ## Cooperativo
 

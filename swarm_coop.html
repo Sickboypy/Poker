@@ -30,6 +30,9 @@
         #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); clip-path: polygon(0 0, 100% 0, 100% 30%, 0 30%, 0 70%, 100% 70%, 100% 100%, 0 100%); }
         #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); clip-path: polygon(0 0, 30% 0, 30% 100%, 0 100%, 70% 0, 100% 0, 100% 100%, 70% 100%); }
         #instructions { top: 12px; left: 12px; line-height: 1.55; font-size: 14px; }
+        #ff-toggle { display: inline-block; margin: 4px 0; padding: 4px 10px; cursor: pointer; color: #ffc15e;
+                     border: 1px solid rgba(255, 193, 94, 0.6); border-radius: 4px; font-weight: bold; }
+        #ff-toggle input { transform: scale(1.4); margin-right: 8px; vertical-align: middle; cursor: pointer; }
         #invert-status { bottom: 58px; left: 12px; color: var(--hud-amber); display: none; }
         #fuel-container {
             position: absolute; bottom: 12px; right: 12px; width: 210px; height: 20px;
@@ -112,32 +115,63 @@
         #end-screen p { font-size: 18px; margin: 6px 0; color: #aaccdd; }
         #end-screen .restart { margin-top: 24px; color: var(--hud-amber); font-size: 16px; animation: pulse 1.2s infinite; }
         @keyframes pulse { 50% { opacity: 0.35; } }
+        #map-select {
+            position: absolute; inset: 0; z-index: 50; display: none; flex-direction: column;
+            align-items: center; justify-content: center; gap: 22px; padding: 16px; box-sizing: border-box;
+            background: radial-gradient(ellipse at center, #0b1424 0%, #03050c 75%); color: var(--hud-cyan);
+            font-family: 'Courier New', monospace; text-align: center; overflow-y: auto;
+        }
+        #map-select h1 { margin: 0; font-size: 40px; letter-spacing: 8px; text-shadow: 0 0 22px currentColor; }
+        #map-select .sub { color: #8fb6c8; font-size: 15px; }
+        #map-select .cards { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; }
+        #map-select button {
+            width: 300px; max-width: 86vw; padding: 20px 18px; cursor: pointer; text-align: left;
+            background: rgba(10, 20, 36, 0.92); color: #cfe; border: 2px solid rgba(54, 249, 246, 0.45);
+            border-radius: 8px; font: 15px/1.45 'Courier New', monospace; transition: transform .12s, border-color .12s;
+            display: flex; flex-direction: column; justify-content: flex-start;
+        }
+        #map-select button:hover { transform: translateY(-3px); border-color: #36f9f6; box-shadow: 0 0 22px rgba(54,249,246,.35); }
+        #map-select button b { display: block; font-size: 22px; color: #36f9f6; margin-bottom: 8px; letter-spacing: 2px; }
+        #map-select button.m2 { border-color: rgba(255, 90, 216, 0.5); }
+        #map-select button.m2:hover { border-color: #ff5ad8; box-shadow: 0 0 22px rgba(255,90,216,.35); }
+        #map-select button.m2 b { color: #ff5ad8; }
     </style>
 </head>
 <body>
+    <div id="map-select">
+        <h1>SWARM DESCENT</h1>
+        <div class="sub" id="map-select-room"></div>
+        <div class="cards">
+            <button data-map="1"><b>MAPA 1 · EL DESCENSO</b>Bajá sala por sala hasta el reactor. Pozo vertical, un bosque a oscuras y la Reina al fondo.</button>
+            <button data-map="2" class="m2"><b>MAPA 2 · LA COLMENA</b>Un pozo gigante con turbinas y tres ramas en el orden que quieras: la Fundición, el Invernadero sin luz y la Galería de los francotiradores. Activá los 3 relés y subí al nido.</button>
+        </div>
+        <div class="sub">Si tu compañero ya está jugando, entrás a su mapa automáticamente.</div>
+    </div>
     <div id="crosshair"></div>
     <div id="instructions" class="hud">
-        MISIÓN: Descendé hasta el reactor y destruí a la Reina<br>
+        <span id="mission">MISIÓN: Descendé hasta el reactor y destruí a la Reina</span><br>
         Las salas se sellan al entrar · Hay salas opcionales con munición<br>
         F: Linterna (VR: grip derecho) · Los barriles explotan<br>
         ───────────────<br>
         WASD: Mover · SPACE/CTRL: Subir/Bajar<br>
         Q/E: Rodar · SHIFT: Boost<br>
-        Clic Izq (mantener): Disparar · Clic Der: Mirar<br>
+        Clic en la pantalla: el ratón controla la vista · Clic Izq (mantener): Disparar<br>
         1-9: Cambiar arma (probá todas) · N: números de daño<br>
         1 Blaster · 2 SMG · 3 Escopeta · 4 Railgun<br>
         5 Misiles · 6 Granadas · 7 Plasma · 8 Triple<br>
         9 Incinerador (mantené para cargar, soltá para lanzar)<br>
         I: Invertir eje Y · B: Bloom · T: Saltar a objetivo<br>
-        R: Reiniciar (tras morir/ganar) · ESC: Liberar ratón<br>
+        R: Reiniciar (tras morir/ganar) · ESC: Liberar ratón (pausa la vista)<br>
         ───── RED ─────<br>
         Todos entran a la misma dirección con el mismo código de sala<br>
         Cooperativo: mismos enemigos · si caés, tu compañero te revive acercándose<br>
-        Los pickups son del primero que llega · Fuego amigo: lo elige quien crea la sala<br>
+        Los pickups son del primero que llega<br>
+        <label id="ff-toggle"><input type="checkbox" id="ff-check">FUEGO AMIGO (G) — lo cambia el anfitrión</label><br>
         ───── VR (Quest) ─────<br>
         Botón "ENTER VR" abajo · Gatillos: disparar (1 por mano)<br>
         Stick izq: mover · Stick der: girar / subir-bajar<br>
-        Grip izq: boost · A/B: cambiar arma
+        Grip izq: boost · A/B: cambiar arma<br>
+        Clic del stick izq: fuego amigo (anfitrión)
     </div>
     <div id="invert-status" class="hud">Eje Y del Ratón: Invertido</div>
     <div id="fuel-label">BOOST</div>
@@ -315,6 +349,14 @@
     const mapColliders = [];          // Box3 precomputados (FIX PERF: una sola vez)
     const decorativeObjects = [];
 
+    // Mapa elegido: ?mapa=1 | ?mapa=2. Sin parámetro → pantalla para elegir.
+    // (Sin 'location', como en las pruebas sin servidor, es el mapa 1.)
+    const MAP_ID = (() => {
+        let n = 0;
+        try { n = parseInt(new URLSearchParams(location.search || '').get('mapa'), 10) || 0; } catch (e) { n = 1; }
+        return n === 1 || n === 2 ? n : 0;
+    })();
+
     // =====================================================================
     //  DISEÑO DE CAMPAÑA — descenso diagonal por cámaras conectadas
     //  El jugador arranca en el HANGAR (arriba, seguro) y desciende a través
@@ -333,7 +375,15 @@
     // Centros de cada zona (x, y, z). Trazado nuevo: salas y pasillos que
     // encajan exactamente puerta con puerta (antes eran cajas en el vacío y
     // varias puertas daban al exterior).
-    const ZONES = {
+    const ZONES = MAP_ID === 2 ? {
+        hangar:      new THREE.Vector3(0, 0, 0),          // el Muelle (inicio)
+        nucleo:      new THREE.Vector3(0, 20, 150),       // Pozo Central (fuera del eje de las turbinas)
+        fundicion:   new THREE.Vector3(-250, 50, 210),
+        invernadero: new THREE.Vector3(270, 160, 210),
+        galeria:     new THREE.Vector3(0, 255, 640),
+        arsenal:     new THREE.Vector3(80, 250, 630),
+        arena:       new THREE.Vector3(60, 450, 240),     // el Nido (Reina)
+    } : {
         hangar:   new THREE.Vector3(0, 0, 0),
         chamber1: new THREE.Vector3(0, -80, 190),     // El Pozo (tiro vertical)
         relay1:   new THREE.Vector3(0, -170, 380),    // Enfermería (respiro)
@@ -455,13 +505,192 @@
         });
         box(60, -480, 690, 90, 8, 90, COL.innerB, 1);    // plataforma baja
     }
-    buildCampaignMap();
+    // =====================================================================
+    //  MAPA 2 — LA COLMENA
+    //  Muelle → pasillo → POZO CENTRAL (420 de alto, turbinas giratorias,
+    //  eje en el medio). Desde el pozo salen tres ramas en el orden que
+    //  quieras: LA FUNDICIÓN (barriles y tanques), EL INVERNADERO (apagón) y
+    //  LA GALERÍA (francotiradores; Arsenal opcional al costado). Cada rama
+    //  limpia activa un relé: frena una turbina y el pozo te recibe con una
+    //  oleada mayor. Con los 3 relés se abre la membrana del NIDO, arriba.
+    // =====================================================================
+    const GATES = [];    // membranas que se abren con una condición
+    const PYLONS = [];   // relés visibles al fondo de cada rama
+    const DECOR = [];    // adornos que brillan sin ser luces (ni colliders): {x,y,z,w,h,d,color,key}
+
+    // Marco de color alrededor de una puerta, del lado de adentro de la sala
+    function doorFrame(plane, f, a, b, s, color, key) {
+        const ax = f[1], inward = f[0] === '+' ? -1 : 1, p = plane + inward * 4.6, e = s / 2 + 1.2, t = 1.6, L = s + 4.8;
+        const put = (A, B, wa, wb) => {
+            if (ax === 'x') DECOR.push({ x: p, y: A, z: B, w: 0.6, h: wa, d: wb, color, key });
+            else if (ax === 'z') DECOR.push({ x: A, y: B, z: p, w: wa, h: wb, d: 0.6, color, key });
+            else DECOR.push({ x: A, y: p, z: B, w: wa, h: 0.6, d: wb, color, key });
+        };
+        put(a - e, b, t, L); put(a + e, b, t, L); put(a, b - e, L, t); put(a, b + e, L, t);
+        DECOR.push({ glow: true, x: ax === 'x' ? p + inward * 2 : (ax === 'z' ? a : a), y: ax === 'x' ? a : (ax === 'z' ? b : p + inward * 2),
+                     z: ax === 'x' ? b : (ax === 'z' ? p + inward * 2 : b), color, key });
+    }
+    function buildColmenaMap() {
+        const V = (x, y, z) => new THREE.Vector3(x, y, z);
+        const S = 30;
+        room2('hangar', V(-40, -25, -40), V(40, 25, 40), COL.wall, [{ f: '+z', a: 0, b: 0, s: S }]);
+        room2('k1', V(-15, -15, 40), V(15, 15, 100), COL.innerA,
+              [{ f: '-z', a: 0, b: 0, s: S }, { f: '+z', a: 0, b: 0, s: S }]);
+
+        // POZO CENTRAL
+        room2('nucleo', V(-110, -60, 100), V(110, 360, 320), COL.wall, [
+            { f: '-z', a: 0, b: 0, s: S },          // desde el muelle (abajo)
+            { f: '-x', a: 40, b: 210, s: S },       // Fundición (nivel 1)
+            { f: '+x', a: 150, b: 210, s: S },      // Invernadero (nivel 2)
+            { f: '+z', a: 0, b: 250, s: S },        // Galería (nivel 3)
+            { f: '+y', a: 60, b: 260, s: S },       // Nido (arriba, con membrana)
+        ], { combat: true });
+        box(0, 135, 210, 14, 390, 14, COL.pillar, 2);         // eje de las turbinas
+        box(-95, 20, 210, 30, 4, 60, COL.innerB, 2);          // repisa de la Fundición
+        box(95, 130, 210, 30, 4, 60, COL.innerB, 2);          // repisa del Invernadero
+        box(0, 230, 305, 60, 4, 30, COL.innerB, 2);           // repisa de la Galería
+        box(-60, 150, 140, 18, 10, 18, COL.innerB, 1);        // escombros flotando
+        box(60, 260, 140, 16, 16, 16, COL.innerB, 1);
+        box(-70, 275, 280, 20, 6, 30, COL.innerB, 1);
+        box(70, 30, 150, 24, 6, 24, COL.innerB, 1);
+        box(-60, -40, 280, 30, 40, 10, COL.innerA, 1);        // restos en el fondo (cobertura)
+        box(70, -45, 120, 12, 30, 30, COL.innerA, 1);
+        // Puertas de las ramas marcadas con su color (se apagan al limpiar la rama)
+        doorFrame(-110, '-x', 40, 210, S, 0xff8a2a, 'fundicion');
+        doorFrame(110, '+x', 150, 210, S, 0x66ff99, 'invernadero');
+        doorFrame(320, '+z', 0, 250, S, 0x66ccff, 'galeria');
+        // Tiras verticales en las esquinas: se siente la altura del pozo
+        for (const [x, z] of [[-105, 105], [105, 105], [-105, 315], [105, 315]]) DECOR.push({ x, y: 150, z, w: 1, h: 410, d: 1, color: 0x6a2a8a });
+        // Bandas rojas a la altura de cada turbina: avisan dónde está el peligro
+        for (const y of [95, 200, 305]) {
+            DECOR.push({ x: -105.5, y, z: 210, w: 0.6, h: 1.2, d: 210, color: 0x8a1a0a });
+            DECOR.push({ x: 105.5, y, z: 210, w: 0.6, h: 1.2, d: 210, color: 0x8a1a0a });
+            DECOR.push({ x: 0, y, z: 105.5, w: 210, h: 1.2, d: 0.6, color: 0x8a1a0a });
+            DECOR.push({ x: 0, y, z: 314.5, w: 210, h: 1.2, d: 0.6, color: 0x8a1a0a });
+        }
+
+        // LA FUNDICIÓN (nivel 1): tanques gigantes, pasarela y barriles
+        room2('kA', V(-170, 25, 195), V(-110, 55, 225), COL.innerA,
+              [{ f: '+x', a: 40, b: 210, s: S }, { f: '-x', a: 40, b: 210, s: S }]);
+        room2('fundicion', V(-330, -10, 130), V(-170, 110, 290), COL.wall,
+              [{ f: '+x', a: 40, b: 210, s: S }], { combat: true });
+        [[-280, 170], [-280, 250], [-215, 170], [-215, 250]].forEach(([x, z]) => box(x, 40, z, 22, 100, 22, COL.hazard, 2));
+        box(-250, 60, 210, 160, 3, 8, COL.innerB, 2);         // pasarela
+        PYLONS.push({ pos: V(-318, 45, 210), key: 'fundicion' });
+
+        // EL INVERNADERO (nivel 2): bosque de columnas, sin luz cuando entrás
+        room2('kB', V(110, 135, 195), V(170, 165, 225), COL.innerA,
+              [{ f: '-x', a: 150, b: 210, s: S }, { f: '+x', a: 150, b: 210, s: S }]);
+        room2('invernadero', V(170, 90, 110), V(370, 230, 310), COL.wall,
+              [{ f: '-x', a: 150, b: 210, s: S }], { combat: true });
+        for (const gx of [190, 230, 270, 310, 350]) for (const gz of [130, 170, 210, 250, 290]) {
+            if (gx === 190 && gz === 210) continue;          // entrada libre
+            if (gx === 270 && gz === 210) continue;          // claro del medio
+            if (gx === 350 && gz === 210) continue;          // relé
+            box(gx, 160, gz, 8, 140, 8, COL.pillar, 2);
+        }
+        box(270, 120, 190, 200, 4, 4, COL.innerB, 1);          // enredaderas cruzadas
+        box(270, 200, 250, 200, 4, 4, COL.innerB, 1);
+        box(250, 180, 210, 4, 4, 200, COL.innerB, 1);
+        box(290, 130, 210, 4, 4, 200, COL.innerB, 1);
+        PYLONS.push({ pos: V(352, 160, 210), key: 'invernadero' });
+
+        // LA GALERÍA (nivel 3): 500 de largo, columnas para cubrirte
+        room2('kC', V(-15, 235, 320), V(15, 265, 380), COL.innerA,
+              [{ f: '-z', a: 0, b: 250, s: S }, { f: '+z', a: 0, b: 250, s: S }]);
+        room2('galeria', V(-50, 215, 380), V(50, 295, 880), COL.wall,
+              [{ f: '-z', a: 0, b: 250, s: S }, { f: '+x', a: 250, b: 630, s: S }], { combat: true });
+        [440, 500, 560, 620, 680, 740, 800].forEach((z, k) => {
+            const x = k % 2 === 0 ? -25 : 25;
+            if (x > 0 && Math.abs(z - 630) < 25) return;     // puerta del Arsenal libre
+            box(x, 255, z, 12, 80, 12, COL.pillar, 2);
+            box(-x * 0.4, 228, z + 30, 40, 18, 4, COL.innerB, 1);   // murito bajo
+        });
+        room2('arsenal', V(50, 225, 600), V(110, 275, 660), COL.innerA,
+              [{ f: '-x', a: 250, b: 630, s: S }], { combat: true });
+        PYLONS.push({ pos: V(0, 255, 866), key: 'galeria' });
+
+        // EL NIDO (arriba): arena de la Reina
+        room2('nido', V(-90, 360, 90), V(210, 540, 390), COL.wall,
+              [{ f: '-y', a: 60, b: 260, s: S }], { combat: true });
+        [[-50, 130], [170, 130], [-50, 350], [170, 350]].forEach(([x, z]) => box(x, 450, z, 20, 180, 20, COL.pillar, 2));
+        box(-40, 430, 170, 20, 20, 20, COL.innerB, 1);
+        box(160, 480, 320, 20, 20, 20, COL.innerB, 1);
+        box(150, 420, 150, 24, 8, 24, COL.innerB, 1);
+
+        // Membrana del nido: tapa la puerta de arriba del pozo hasta tener los 3 relés
+        GATES.push({ center: V(60, 360, 260), size: V(S, 4, S), color: 0xb03cff,
+                     open: () => relaysDone() >= 3, msg: 'SE ABRIÓ EL NIDO — SUBÍ POR EL POZO' });
+    }
+
+    if (MAP_ID === 2) buildColmenaMap(); else buildCampaignMap();
     for (const k in ROOMS) if (ROOMS[k].combat) makeVents(ROOMS[k]);
     const mapSizeApprox = 800;
 
+    // Luces, rayos giratorios y migas de cada mapa (la cantidad de luces es fija
+    // durante la partida: apagar = intensidad 0, nunca agregar/quitar luces)
+    const MAP_FX = MAP_ID === 2 ? {
+        mission: 'MISIÓN: Activá los 3 relés de La Colmena y matá a la Reina en el nido',
+        roomLights: [
+            [0x88bbff, new THREE.Vector3(0, 15, 0), 14],          // muelle
+            [0xff5533, new THREE.Vector3(0, -40, 210), 34],       // brasa en el fondo del pozo
+            [0xff8a2a, new THREE.Vector3(-250, 85, 210), 26],     // Fundición
+            [0x66ffaa, new THREE.Vector3(0, 280, 830), 14],       // fondo de la Galería
+            [0xd040ff, new THREE.Vector3(60, 520, 240), 40],      // Nido
+        ],
+        flicker: [
+            new THREE.Vector3(0, 10, 70), new THREE.Vector3(0, 170, 260),
+            new THREE.Vector3(270, 210, 210), new THREE.Vector3(0, 280, 560),
+        ],
+        // turbinas del pozo: cada relé frena una (stopAt = relés necesarios)
+        hazards: [
+            { c: new THREE.Vector3(0, 95, 210), speed: 0.30, phase: 0, half: 105, room: 'nucleo', stopAt: 1 },
+            { c: new THREE.Vector3(0, 200, 210), speed: -0.24, phase: Math.PI / 3, half: 105, room: 'nucleo', stopAt: 2 },
+            { c: new THREE.Vector3(0, 305, 210), speed: 0.36, phase: Math.PI / 1.5, half: 105, room: 'nucleo', stopAt: 3 },
+        ],
+        crumbs: [[[0, -10, 45], [0, -10, 95]], [[-120, 30, 210], [-165, 30, 210]], [[120, 140, 210], [165, 140, 210]], [[0, 240, 325], [0, 240, 375]]],
+    } : {
+        mission: 'MISIÓN: Descendé hasta el reactor y destruí a la Reina',
+        roomLights: [
+            [0x88bbff, new THREE.Vector3(0, 15, 0), 14],        // hangar: frío, seguro
+            [0xff5533, new THREE.Vector3(0, -190, 190), 34],    // pozo: brasa roja al fondo
+            [0x88ffaa, new THREE.Vector3(0, -152, 380), 10],    // enfermería: verde tenue
+            [0x66ccff, new THREE.Vector3(60, -250, 690), 8],    // caída
+            [0xff4422, new THREE.Vector3(60, -500, 690), 40],   // reactor: resplandor desde abajo
+        ],
+        flicker: [
+            new THREE.Vector3(0, 10, 80), new THREE.Vector3(0, -160, 300),
+            new THREE.Vector3(0, -160, 460), new THREE.Vector3(0, -125, 610),
+        ],
+        hazards: [
+            { c: new THREE.Vector3(60, -385, 690), speed: 0.32, phase: 0, half: 130, room: 'arena', stopAt: 0 },
+            { c: new THREE.Vector3(60, -455, 690), speed: -0.22, phase: Math.PI / 2, half: 130, room: 'arena', stopAt: 0 },
+        ],
+        crumbs: [[[0, -10, 45], [0, -10, 115]], [[0, -180, 265], [0, -180, 335]], [[0, -180, 425], [0, -180, 495]]],
+    };
+
     // Cámaras de combate: cada una vive en una sala (key). Las opcionales no
     // son objetivo; la arena, al limpiarse, da paso al jefe.
-    const CHAMBER_DEFS = [
+    // requires: relés (ramas limpias) necesarios para que la sala se active.
+    // wing: es una rama (limpiarla = un relé). blackout: se corta la luz.
+    const CHAMBER_DEFS = MAP_ID === 2 ? [
+        { name: 'POZO CENTRAL — PRIMER CONTACTO', key: 'nucleo', zone: ZONES.nucleo, tier: 1, radius: 30,
+          composition: { grunt: 10, drone: 6 } },
+        { name: 'LA FUNDICIÓN', key: 'fundicion', zone: ZONES.fundicion, tier: 2, radius: 25, wing: true,
+          composition: { tank: 4, grunt: 8, drone: 3 } },
+        { name: 'EL INVERNADERO', key: 'invernadero', zone: ZONES.invernadero, tier: 2, radius: 25, wing: true, blackout: true,
+          composition: { healer: 3, drone: 10, grunt: 6, sniper: 1 } },
+        { name: 'LA GALERÍA', key: 'galeria', zone: ZONES.galeria, tier: 2, radius: 25, wing: true,
+          composition: { sniper: 6, grunt: 6, tank: 1 } },
+        { name: 'ARSENAL (opcional)', key: 'arsenal', zone: ZONES.arsenal, tier: 2, radius: 10, optional: true,
+          composition: { grunt: 3, drone: 3 } },
+        { name: 'POZO CENTRAL — SEGUNDA OLEADA', key: 'nucleo', zone: ZONES.nucleo, tier: 2, radius: 30, requires: 1,
+          composition: { grunt: 10, drone: 6, tank: 2, sniper: 2 } },
+        { name: 'POZO CENTRAL — TERCERA OLEADA', key: 'nucleo', zone: ZONES.nucleo, tier: 3, radius: 30, requires: 2,
+          composition: { grunt: 12, drone: 8, tank: 3, sniper: 3, healer: 1 } },
+        { name: 'EL NIDO', key: 'nido', zone: ZONES.arena, tier: 3, radius: 50, arena: true, requires: 3,
+          composition: { grunt: 14, drone: 8, tank: 3, sniper: 3, healer: 2 } },
+    ] : [
         { name: 'EL POZO', key: 'pozo', zone: ZONES.chamber1, tier: 1, radius: 30,
           composition: { grunt: 12, drone: 6 } },
         { name: 'DEPÓSITO (opcional)', key: 'deposito', zone: ZONES.side1, tier: 1, radius: 16, optional: true,
@@ -475,7 +704,13 @@
     ];
 
     // Barriles explosivos (centro = piso + 4 de pared + 1.6 de medio barril)
-    const BARREL_SPOTS = [
+    const BARREL_SPOTS = MAP_ID === 2 ? [
+        [-250, -4.4, 150], [-250, -4.4, 270], [-310, -4.4, 210], [-190, -4.4, 140],   // Fundición (piso)
+        [-190, -4.4, 280], [-250, -4.4, 210], [-320, -4.4, 140],
+        [-60, -54.4, 150], [60, -54.4, 280],                                          // fondo del pozo
+        [30, 220.6, 500], [-30, 220.6, 760],                                          // Galería
+        [0, 365.6, 150], [150, 365.6, 330], [-40, 365.6, 330],                        // Nido
+    ] : [
         [40, -40.4, 150], [-40, -100.4, 230],                          // Pozo (sobre plataformas)
         [100, -194.4, 370],                                            // Depósito
         [-60, -224.4, 570], [60, -224.4, 630], [-20, -224.4, 680],     // Bosque
@@ -530,7 +765,20 @@
     // Ubicados sobre todo en los túneles-respiro (recompensa entre combates).
     const powerUps = [];
     const POWERUP_RESPAWN = 30.0;
-    const powerUpDefs = [
+    const powerUpDefs = MAP_ID === 2 ? [
+        { pos: [0, -5, -20], type: 'rapid', noRespawn: true },          // muelle
+        { pos: [0, 0, 70], type: 'fuel' },                               // pasillo
+        { pos: [-95, 28, 240], type: 'health', noRespawn: true },       // repisa de la Fundición
+        { pos: [80, 100, 290], type: 'ammo', noRespawn: true },         // pozo
+        { pos: [-80, 300, 130], type: 'fuel' },                          // pozo alto
+        { pos: [-300, 0, 160], type: 'ammo', noRespawn: true },         // Fundición
+        { pos: [-300, 0, 260], type: 'health', noRespawn: true },
+        { pos: [330, 110, 150], type: 'ammo', noRespawn: true },        // Invernadero (entre columnas)
+        { pos: [0, 255, 700], type: 'health', noRespawn: true },        // Galería
+        { pos: [90, 240, 615], type: 'ammo', noRespawn: true },         // Arsenal (opcional)
+        { pos: [90, 240, 645], type: 'rapid', noRespawn: true },
+        { pos: [70, 250, 630], type: 'health', noRespawn: true },
+    ] : [
         { pos: [0, -5, -20], type: 'rapid', noRespawn: true },          // hangar
         { pos: [-20, -170, 360], type: 'health', noRespawn: true },     // enfermería
         { pos: [20, -170, 360], type: 'fuel' },
@@ -935,6 +1183,11 @@
     // =====================================================================
     //  INIT
     // =====================================================================
+    // --- efectos propios del mapa (estado global, ANTES de init) ---
+    const roomLights = [], ambientLights = [];
+    const gateObjs = [], pylonObjs = [], decorObjs = [];
+    let blackoutK = 0, blackoutWas = false;
+
     // =====================================================================
     //  RED etapa 2 — partida compartida (estado global, ANTES de init)
     // =====================================================================
@@ -945,6 +1198,9 @@
     const ENEMY_TYPE_NAMES = Object.keys(ENEMY_TYPES);
     let netRole = 'solo';                // 'solo' | 'host' | 'guest'
     let netFF = false;
+    let ffPref = null;                   // lo que eligió el jugador antes de conectarse
+    let vrStickPrev = false;
+    const ffCheckEl = document.getElementById('ff-check');
     let enemyNid = 0;
     const enemyMap = new Map();          // nid → enemigo (o réplica en el invitado)
     let netWorldT = 0, worldAdopted = false, lastWorld = null;
@@ -960,8 +1216,30 @@
     const coopMsgEl = document.getElementById('coop-msg');
     const _cTmp = new THREE.Vector3(), _cTmp2 = new THREE.Vector3();
 
-    init();
-    renderer.setAnimationLoop(animate);   // funciona en desktop y en WebXR
+    if (MAP_ID) {
+        init();
+        renderer.setAnimationLoop(animate);   // funciona en desktop y en WebXR
+    } else {
+        showMapSelector();
+    }
+
+    // Pantalla para elegir mapa: recarga con ?mapa=N (conserva sala y fuego amigo)
+    function showMapSelector() {
+        const el = document.getElementById('map-select');
+        if (!el) return;
+        el.style.display = 'flex';
+        let sala = 'publica';
+        try { sala = new URLSearchParams(location.search || '').get('sala') || 'publica'; } catch (e) {}
+        const roomEl = document.getElementById('map-select-room');
+        if (roomEl) roomEl.textContent = `Sala: ${sala}`;
+        el.querySelectorAll('button[data-map]').forEach(b => b.addEventListener('click', () => goToMap(b.dataset.map)));
+    }
+
+    function goToMap(n) {
+        const qs = new URLSearchParams(location.search || '');
+        qs.set('mapa', String(n));
+        location.search = '?' + qs.toString();
+    }   // funciona en desktop y en WebXR
 
     function init() {
         scene = new THREE.Scene();
@@ -1000,34 +1278,25 @@
         composer.addPass(bloomPass);
 
         // --- Iluminación de horror (cantidad de luces FIJA: nunca cambia) ---
-        scene.add(new THREE.AmbientLight(0x1a2030, 0.35));
+        const amb = new THREE.AmbientLight(0x1a2030, 0.35);
+        scene.add(amb);
         const hl = new THREE.HemisphereLight(0x334466, 0x0a0a12, 0.25);
         hl.position.set(0, 50, 0);
         scene.add(hl);
         const dl = new THREE.DirectionalLight(0x8899cc, 0.12);
         dl.position.set(20, 30, 15);
         scene.add(dl);
+        [amb, hl, dl].forEach(l => { l.userData.base = l.intensity; ambientLights.push(l); });
 
-        // Pocas luces de sala: el Bosque y las salas opcionales quedan a oscuras
-        const roomLightDefs = [
-            [0x88bbff, new THREE.Vector3(0, 15, 0), 14],        // hangar: frío, seguro
-            [0xff5533, new THREE.Vector3(0, -190, 190), 34],    // pozo: brasa roja al fondo
-            [0x88ffaa, new THREE.Vector3(0, -152, 380), 10],    // enfermería: verde tenue
-            [0x66ccff, new THREE.Vector3(60, -250, 690), 8],    // caída
-            [0xff4422, new THREE.Vector3(60, -500, 690), 40],   // reactor: resplandor desde abajo
-        ];
-        roomLightDefs.forEach(([c, pos, inten]) => {
+        // Luces de sala y que parpadean: las define el mapa (cantidad fija)
+        MAP_FX.roomLights.forEach(([c, pos, inten]) => {
             const l = new THREE.PointLight(c, inten, 220, 1.6);
             l.position.copy(pos);
+            l.userData.base = inten;
             scene.add(l);
+            roomLights.push(l);
         });
-
-        // Luces que parpadean y a veces se apagan (pasillos y el Bosque)
-        const flPositions = [
-            new THREE.Vector3(0, 10, 80), new THREE.Vector3(0, -160, 300),
-            new THREE.Vector3(0, -160, 460), new THREE.Vector3(0, -125, 610),
-        ];
-        flPositions.forEach(pos => {
+        MAP_FX.flicker.forEach(pos => {
             const light = new THREE.PointLight(0xffaa55, 10, 90, 2);
             light.position.copy(pos);
             light.userData = { baseIntensity: 10, flickerPhase: Math.random() * Math.PI * 2, blackT: 0 };
@@ -1049,7 +1318,11 @@
         createHitIndicators();
         createHazards();
         createEnemies();
+        createMapFX();
+        const missionEl = document.getElementById('mission');
+        if (missionEl) missionEl.textContent = MAP_FX.mission;
         setupControls();
+        setupFFToggle();
         for (let i = 0; i < WEAPONS.length; i++) ammo[i] = WEAPONS[i].ammoMax;
         updateWeaponHUD();
         createRemoteFlashlight();
@@ -1105,7 +1378,7 @@
             scene.add(m); decorativeObjects.push(m);
         }
         // Migas de luz tenues solo en los pasillos (marcan el camino sin romper la oscuridad)
-        const paths = [[[0, -10, 45], [0, -10, 115]], [[0, -180, 265], [0, -180, 335]], [[0, -180, 425], [0, -180, 495]]];
+        const paths = MAP_FX.crumbs;
         const breadGeo = new THREE.OctahedronGeometry(0.8, 0);
         const breadMat = new THREE.MeshBasicMaterial({ color: 0x1d4f7a });
         for (const [a, b] of paths) for (let t = 0.1; t <= 0.91; t += 0.2) {
@@ -1865,8 +2138,27 @@
         ch.enemies.push(e);
     }
 
+    // Relés de La Colmena = ramas limpias (en el mapa 1 no hay ramas: 0)
+    function relaysDone() {
+        let n = 0;
+        for (const c of chambers) if (c.def.wing && c.cleared) n++;
+        return n;
+    }
+
+    function chamberUnlocked(ch) {
+        return !ch.def.requires || relaysDone() >= ch.def.requires;
+    }
+
     function mainObjective() {
-        return chambers.find(c => !c.cleared && !c.optional && !c.static && !c.persistent);
+        const cands = chambers.filter(c => !c.cleared && !c.optional && !c.static && !c.persistent && chamberUnlocked(c));
+        if (MAP_ID !== 2) return cands[0];
+        // Colmena: el orden es libre → la más cercana
+        let best = null, bd = Infinity;
+        for (const c of cands) {
+            const d = player.position.distanceToSquared(c.def.zone);
+            if (d < bd) { bd = d; best = c; }
+        }
+        return best;
     }
 
     // --- Barriles: explosión diferida (permite cadenas) ---
@@ -1887,23 +2179,22 @@
 
     // --- El Reactor: rayos giratorios que dañan a todos (esquivalos en 3D) ---
     function createHazards() {
-        const c = ZONES.arena;
-        [[-385, 0.32, 0], [-455, -0.22, Math.PI / 2]].forEach(([y, speed, phase]) => {
+        for (const h of MAP_FX.hazards) {
             const g = new THREE.Group();
-            g.position.set(c.x, y, c.z);
-            const core = new THREE.Mesh(new THREE.BoxGeometry(260, 1.2, 1.2), new THREE.MeshBasicMaterial({ color: 0xffd2b0 }));
-            const glow = new THREE.Mesh(new THREE.BoxGeometry(260, 4, 4), new THREE.MeshBasicMaterial({
+            g.position.copy(h.c);
+            const core = new THREE.Mesh(new THREE.BoxGeometry(h.half * 2, 1.2, 1.2), new THREE.MeshBasicMaterial({ color: 0xffd2b0 }));
+            const glow = new THREE.Mesh(new THREE.BoxGeometry(h.half * 2, 4, 4), new THREE.MeshBasicMaterial({
                 color: 0xff3a10, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false
             }));
             const hub = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 5, 12),
                 new THREE.MeshStandardMaterial({ color: 0x2a1a1a, emissive: 0x661100, emissiveIntensity: 1.5 }));
             g.add(core, glow, hub);
-            g.rotation.y = phase;
+            g.rotation.y = h.phase;
             g.visible = false;
-            g.userData = { speed, half: 130, acc: 0, glow };
+            g.userData = { speed: h.speed, half: h.half, acc: 0, glow, core, stopAt: h.stopAt, room: ROOMS[h.room], stopped: false };
             scene.add(g);
             hazardBeams.push(g);
-        });
+        }
     }
 
     function distToSegment(p, c, dir, half, out) {
@@ -1913,22 +2204,37 @@
         return Math.hypot(p.x - qx, p.y - qy, p.z - qz);
     }
 
-    function updateHazards(dt) {
+    function hazardsOn() {
+        if (victory) return false;
+        if (MAP_ID === 2) { const hub = chambers.find(c => c.def.key === 'nucleo'); return !!hub && hub.activated; }
         const arenaCh = chambers.find(c => c.def.arena);
-        const on = !!arenaCh && arenaCh.activated && !victory;
+        return !!arenaCh && arenaCh.activated;
+    }
+
+    function updateHazards(dt) {
+        const on = hazardsOn();
+        const relays = relaysDone();
         for (const g of hazardBeams) {
+            const u = g.userData;
             g.visible = on;
-            if (!on) continue;
-            g.rotation.y += g.userData.speed * dt;
-            g.userData.glow.material.opacity = 0.25 + Math.sin(clock.elapsedTime * 9) * 0.08;
-            _beamAxis.set(Math.cos(g.rotation.y), 0, -Math.sin(g.rotation.y));   // X local rotado en Y
-            const half = g.userData.half;
-            if (!gameOver && !downed && distToSegment(player.position, g.position, _beamAxis, half, _beamPt) < 3.2) {
-                g.userData.acc += 32 * dt;
-                if (g.userData.acc >= 8) { g.userData.acc = 0; damagePlayer(8, _beamPt); }
+            // Colmena: cada relé frena una turbina (queda quieta y apagada)
+            const stopped = u.stopAt > 0 && relays >= u.stopAt;
+            if (stopped && !u.stopped) {
+                u.stopped = true; u.core.material.color.setHex(0x3a2a26); u.glow.material.opacity = 0.04;
+                if (on) sfxSeal(false);
             }
-            for (const ch of [arenaCh, bossChamber]) {
-                if (!ch || isGuest()) continue;   // a los enemigos los daña el anfitrión
+            if (!on || stopped) continue;
+            g.rotation.y += u.speed * dt;
+            u.glow.material.opacity = 0.25 + Math.sin(clock.elapsedTime * 9) * 0.08;
+            _beamAxis.set(Math.cos(g.rotation.y), 0, -Math.sin(g.rotation.y));   // X local rotado en Y
+            const half = u.half;
+            if (!gameOver && !downed && distToSegment(player.position, g.position, _beamAxis, half, _beamPt) < 3.2) {
+                u.acc += 32 * dt;
+                if (u.acc >= 8) { u.acc = 0; damagePlayer(8, _beamPt); }
+            }
+            if (isGuest()) continue;   // a los enemigos los daña el anfitrión
+            for (const ch of chambers) {
+                if (!ch.activated || ch.cleared || ch.room !== u.room) continue;
                 for (let j = ch.enemies.length - 1; j >= 0; j--) {
                     const e = ch.enemies[j];
                     if (distToSegment(e.position, g.position, _beamAxis, half, null) < 3.5) {
@@ -2165,7 +2471,7 @@
         } catch (e) {}
         if (!/^[a-z0-9_-]{1,24}$/.test(sala)) sala = 'publica';
         netRoom = sala;
-        const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?sala=' + encodeURIComponent(sala) + (wantFF ? '&ff=1' : '');
+        const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?sala=' + encodeURIComponent(sala) + (wantFF ? '&ff=1' : '') + '&mapa=' + MAP_ID;
         let ws;
         try { ws = new WebSocket(url); } catch (e) { scheduleNetRetry(); return; }
         const conn = { ws, id: null, host: false, n: 1, connected: false };
@@ -2198,9 +2504,21 @@
     function onNetMessage(m) {
         switch (m.t) {
             case 'welcome':
+                if ((m.mapa === 1 || m.mapa === 2) && m.mapa !== MAP_ID) {
+                    // la sala ya juega otro mapa: vamos a ese
+                    setNetStatus(`RED: tu compañero juega el mapa ${m.mapa}, cambiando…`);
+                    try { net.ws.onclose = null; net.ws.close(); } catch (e) {}
+                    net = null;
+                    goToMap(m.mapa);
+                    return;
+                }
                 net.id = m.id; net.host = m.host === m.id; net.n = m.n || 1; net.hostId = m.host;
                 netFF = !!m.ff;
-                if (net.host) { if (netRole === 'guest') promoteToHost(); netRole = 'host'; }
+                if (net.host) {
+                    if (netRole === 'guest') promoteToHost();
+                    netRole = 'host';
+                    if (ffPref !== null && ffPref !== netFF) setFriendlyFire(ffPref);   // eligió antes de conectar
+                }
                 else { becomeGuest(); netRole = 'guest'; }
                 break;
             case 'join':
@@ -2236,6 +2554,9 @@
                 break;
             case 'restart':
                 restartGame(true);
+                break;
+            case 'ff':   // el anfitrión prendió/apagó el fuego amigo
+                if (m.id === net.hostId) { netFF = !!m.on; toast(netFF ? 'FUEGO AMIGO ACTIVADO' : 'FUEGO AMIGO DESACTIVADO'); }
                 break;
             case 'st':
                 if (m.id != null && m.id !== net.id) applyRemoteState(m);
@@ -2689,12 +3010,114 @@
         }
         if (!msg && coopToastT > 0 && coopToast) { msg = coopToast; col = '#8dff5a'; }
         coopMsg = msg; coopMsgCol = col;
+        if (ffCheckEl) { ffCheckEl.checked = netFF; ffCheckEl.disabled = isGuest(); }
         if (coopMsgEl) {
             coopMsgEl.textContent = msg;
             coopMsgEl.style.display = msg ? 'block' : 'none';
             coopMsgEl.style.color = col;
         }
         if (!isGuest() && !gameOver && !victory) checkTeamDown();
+    }
+
+    // --- Efectos del mapa: membranas, relés y apagón ---
+    function createMapFX() {
+        for (const gd of GATES) {
+            const box3 = new THREE.Box3().setFromCenterAndSize(gd.center, gd.size);
+            mapColliders.push(box3);
+            const mesh = new THREE.Mesh(new THREE.BoxGeometry(gd.size.x, gd.size.y, gd.size.z), new THREE.MeshBasicMaterial({
+                color: gd.color, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+            }));
+            mesh.position.copy(gd.center);
+            const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: glowTexture, color: gd.color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.6
+            }));
+            glow.scale.set(38, 38, 1);
+            glow.material.opacity = 0.4;
+            mesh.add(glow);
+            scene.add(mesh);
+            gateObjs.push({ def: gd, box3, mesh, open: false, fade: 0 });
+        }
+        // Adornos que brillan (MeshBasic: no dependen de luces, no las suman)
+        const decorMats = new Map();
+        for (const d of DECOR) {
+            const k = d.key || ('c' + d.color);
+            let mats = decorMats.get(k);
+            if (!mats) {
+                mats = { mesh: new THREE.MeshBasicMaterial({ color: d.color }),
+                         glow: new THREE.SpriteMaterial({ map: glowTexture, color: d.color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.35 }) };
+                decorMats.set(k, mats);
+                if (d.key) decorObjs.push({ key: d.key, mats, color: d.color, dim: false });
+            }
+            let o;
+            if (d.glow) { o = new THREE.Sprite(mats.glow); o.scale.set(34, 34, 1); }
+            else o = new THREE.Mesh(new THREE.BoxGeometry(d.w, d.h, d.d), mats.mesh);
+            o.position.set(d.x, d.y, d.z);
+            scene.add(o);
+        }
+        for (const pd of PYLONS) {
+            const mat = new THREE.MeshBasicMaterial({ color: 0xff2a1a });
+            const m = new THREE.Mesh(new THREE.BoxGeometry(4, 16, 4), mat);
+            m.position.copy(pd.pos);
+            const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: glowTexture, color: 0xff2a1a, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.7
+            }));
+            glow.scale.set(18, 18, 1);
+            m.add(glow);
+            scene.add(m);
+            pylonObjs.push({ def: pd, mat, glow, on: false });
+        }
+    }
+
+    function updateMapFX(dt) {
+        // Relés: rojo → verde al limpiar la rama
+        for (const p of pylonObjs) {
+            const ch = chambers.find(c => c.def.key === p.def.key);
+            const on = !!ch && ch.cleared;
+            if (on !== p.on) {
+                p.on = on;
+                p.mat.color.setHex(on ? 0x44ff88 : 0xff2a1a);
+                p.glow.material.color.setHex(on ? 0x44ff88 : 0xff2a1a);
+                if (on) { sfxPowerUp(); toast(`RELÉ ACTIVADO — ${relaysDone()}/3`); }
+            }
+        }
+        // Membranas: se abren cuando se cumple su condición (también en el invitado,
+        // que la deduce de las salas limpias que le manda el anfitrión)
+        for (const g of gateObjs) {
+            if (!g.open && g.def.open()) {
+                g.open = true; g.fade = 1.2;
+                const k = mapColliders.indexOf(g.box3);
+                if (k >= 0) mapColliders.splice(k, 1);
+                sfxSeal(false); sfxExplosion();
+                shakeTime = 0.6; shakeMag = 0.35;
+                toast(g.def.msg);
+            }
+            if (g.open && g.fade > 0) {
+                g.fade -= dt;
+                g.mesh.material.opacity = Math.max(0, g.fade / 1.2) * 0.55;
+                g.mesh.scale.setScalar(1 + (1.2 - Math.max(0, g.fade)) * 0.6);
+                if (g.fade <= 0) g.mesh.visible = false;
+            } else if (!g.open) {
+                g.mesh.material.opacity = 0.42 + Math.sin(clock.elapsedTime * 3) * 0.13;
+            }
+        }
+        // Marcos de puerta: se apagan cuando su rama ya está limpia
+        for (const d of decorObjs) {
+            const ch = chambers.find(c => c.def.key === d.key);
+            const dim = !!ch && ch.cleared;
+            if (dim !== d.dim) {
+                d.dim = dim;
+                d.mats.mesh.color.setHex(dim ? 0x2a3038 : d.color);
+                d.mats.glow.opacity = dim ? 0.06 : 0.35;
+            }
+        }
+        // Apagón: una sala con blackout activa corta todas las luces (solo intensidad)
+        const black = chambers.some(c => c.def.blackout && c.activated && !c.cleared);
+        if (black && !blackoutWas) { sfxSeal(true); toast('SE CORTÓ LA LUZ'); }
+        blackoutWas = black;
+        blackoutK += ((black ? 1 : 0) - blackoutK) * Math.min(1, dt * (black ? 6 : 1.5));
+        const kr = 1 - 0.97 * blackoutK, ka = 1 - 0.8 * blackoutK;
+        for (const l of roomLights) l.intensity = l.userData.base * kr;
+        for (const l of ambientLights) l.intensity = l.userData.base * ka;
     }
 
     // --- Pickups únicos: el primero que llega se lo lleva (desaparece para todos) ---
@@ -2767,6 +3190,25 @@
             const d = av.head.p.distanceTo(pos);
             if (d < radius) queueFF(av, dmg * Math.max(0.25, 1 - Math.max(0, d - 3) / radius), null);
         }
+    }
+
+    // Prender/apagar el fuego amigo: solo el anfitrión (o jugando solo)
+    function setFriendlyFire(on) {
+        if (isGuest()) { toast('EL FUEGO AMIGO LO CAMBIA EL ANFITRIÓN'); return; }
+        ffPref = on;
+        netFF = on;
+        if (net && net.connected && net.id != null && net.host) netSend({ t: 'ff', on: on ? 1 : 0 });
+        toast(on ? 'FUEGO AMIGO ACTIVADO' : 'FUEGO AMIGO DESACTIVADO');
+        refreshNetStatus();
+    }
+
+    function setupFFToggle() {
+        const lab = document.getElementById('ff-toggle');
+        if (!lab || !ffCheckEl) return;
+        // que el clic no dispare el arma ni capture el ratón
+        lab.addEventListener('mousedown', e => e.stopPropagation());
+        lab.addEventListener('mouseup', e => e.stopPropagation());
+        ffCheckEl.addEventListener('change', () => setFriendlyFire(!!ffCheckEl.checked));
     }
 
     function onNetDamage(m) {
@@ -3137,6 +3579,12 @@
                 `▶ ${active.def.name}\n` +
                 `Enemigos: ${chamberLeft(active)}\n` +
                 `SALA SELLADA`;
+        } else if (MAP_ID === 2 && !boss && !victory) {
+            const r = relaysDone();
+            const wings = chambers.filter(c => c.def.wing).map(c => (c.cleared ? '✓ ' : '· ') + c.def.name.replace(/^(LA|EL) /, '')).join('  ');
+            swarmInfoElement.textContent = r < 3
+                ? `▶ RELÉS ${r}/3 — elegí una rama\n${wings}` + (target ? `\nMás cerca: ${target.def.name} (${player.position.distanceTo(target.def.zone).toFixed(0)}u)` : '')
+                : `▶ RELÉS 3/3 — EL NIDO ESTÁ ABIERTO\nSubí por el pozo` + (target ? ` (${player.position.distanceTo(target.def.zone).toFixed(0)}u)` : '');
         } else if (target) {
             swarmInfoElement.textContent =
                 `▶ OBJETIVO: ${target.def.name}\n` +
@@ -3318,7 +3766,7 @@
             def: { name: 'CRÍAS', zone: ZONES.arena, tier: 3, radius: 30, composition: {} },
             enemies: [], center: ZONES.arena.clone(),
             activated: true, cleared: false, index: 99,
-            persistent: true, pending: [], room: ROOMS.arena, engaged: true
+            persistent: true, pending: [], room: (chambers.find(c => c.def.arena) || {}).room, engaged: true
         };
         chambers.push(bossChamber);
 
@@ -3564,13 +4012,23 @@
         document.addEventListener('contextmenu', e => e.preventDefault());
     }
 
+    // El ratón queda enganchado a la vista mientras el puntero está capturado
+    // (clic en la pantalla). ESC lo libera y vuelve a mostrar las instrucciones.
     function handlePointerLockChange() {
-        if (document.pointerLockElement !== document.body) {
-            mouseLookActive = false;
+        const locked = document.pointerLockElement === document.body;
+        mouseLookActive = locked;
+        document.getElementById('instructions').style.display = locked ? 'none' : 'block';
+        if (!locked) {
+            firingHeld = false;   // el mouseup puede perderse al liberar
             invertStatusElement.style.display = invertMouseY ? 'block' : 'none';
-        } else {
-            document.getElementById('instructions').style.display = 'none';
         }
+    }
+
+    function lockPointer() {
+        try {
+            const p = document.body.requestPointerLock();
+            if (p && p.catch) p.catch(() => {});   // Chrome no deja recapturar justo después de ESC
+        } catch (err) {}
     }
 
     function onWindowResize() {
@@ -3583,7 +4041,7 @@
     function onKeyDown(event) {
         initAudio();
         if (['KeyW', 'KeyS', 'KeyA', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ControlLeft', 'ShiftLeft', 'KeyI', 'KeyP', 'KeyT', 'KeyB', 'KeyR',
-             'Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7','Digit8','Digit9','KeyN','KeyF'].includes(event.code)) event.preventDefault();
+             'Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7','Digit8','Digit9','KeyN','KeyF','KeyG'].includes(event.code)) event.preventDefault();
         if (event.code === 'Escape') {
             if (document.pointerLockElement === document.body) document.exitPointerLock();
             mouseLookActive = false;
@@ -3629,6 +4087,9 @@
             case 'KeyF':
                 toggleFlashlight();
                 break;
+            case 'KeyG':
+                setFriendlyFire(!netFF);
+                break;
             case 'KeyP': spawnEnemyInFront(); break;
             case 'KeyT': {
                 // Debug: saltar adentro de la sala objetivo
@@ -3659,21 +4120,22 @@
     function onMouseDown(e) {
         initAudio();
         if (gameOver || victory) return;
+        if (document.pointerLockElement !== document.body) {
+            // primer clic: engancha el ratón a la vista (no dispara).
+            // Botones y casillas (ENTER VR, fuego amigo) siguen funcionando normal.
+            const t = e.target;
+            if (t && t.closest && t.closest('button, a, input, label, select')) return;
+            lockPointer();
+            return;
+        }
         if (e.button === 0) {
             firingHeld = true;          // el disparo se procesa en animate() según cadencia
-        } else if (e.button === 2) {
-            mouseLookActive = true;
-            document.body.requestPointerLock().catch(() => {});
         }
+        // e.button === 2: clic derecho libre
     }
 
     function onMouseUp(e) {
-        if (e.button === 0) {
-            firingHeld = false;
-        } else if (e.button === 2) {
-            mouseLookActive = false;
-            if (document.pointerLockElement === document.body) document.exitPointerLock();
-        }
+        if (e.button === 0) firingHeld = false;
     }
 
     function onMouseMove(event) {
@@ -4467,7 +4929,7 @@
             }
 
             // Activación al ENTRAR a la sala: se sella, trae al que quedó afuera y arranca la emboscada
-            if (!ch.activated && insideP) {
+            if (!ch.activated && insideP && chamberUnlocked(ch)) {
                 ch.activated = true;
                 ch.emergeT = 0.4;
                 if (r && !ch.persistent) { sealRoom(r, true); rescueStragglers(ch); pullTeam(r); }
@@ -4967,7 +5429,7 @@
             ctx.fillStyle = '#' + playerColor(net.id).toString(16).padStart(6, '0');
             ctx.font = 'bold 20px "Courier New", monospace';
             ctx.textAlign = 'right';
-            ctx.fillText(`${net.host ? '★' : ''}J${net.id} · ${net.n}P`, 488, 80);
+            ctx.fillText(`${net.host ? '★' : ''}J${net.id} · ${net.n}P${netFF ? ' · FF' : ''}`, 488, 80);
             ctx.textAlign = 'left';
         }
         if (coopMsg) {   // caído / revivir / traslado
@@ -5120,6 +5582,10 @@
                 if (gp.buttons[4] && gp.buttons[4].pressed) vrMove.up += 1;
                 if (gp.buttons[5] && gp.buttons[5].pressed) vrMove.up -= 1;
                 if (gp.buttons[0]) leftTrigger = gp.buttons[0].value;
+                // Clic del stick izquierdo (botón 3): fuego amigo
+                const stick = !!(gp.buttons[3] && gp.buttons[3].pressed);
+                if (stick && !vrStickPrev) setFriendlyFire(!netFF);
+                vrStickPrev = stick;
             } else if (src.handedness === 'right') {
                 // Stick derecho horizontal: smooth turn (giro continuo). Vertical: subir/bajar.
                 // Stick derecho horizontal: smooth turn con respuesta no lineal
@@ -5364,6 +5830,7 @@
         updateImpactFX(deltaTime);
         updateNet(deltaTime);
         updateCoop(deltaTime);
+        updateMapFX(deltaTime);
         // partida terminada a mitad de una carga → apagar orbe y zumbido
         if ((gameOver || victory) && (chargeState[0].on || chargeState[1].on)) { cancelCharge(0); cancelCharge(1); }
 
@@ -5374,6 +5841,7 @@
             if (Math.random() < 0.004) { u.blackT = 0.05 + Math.random() * 0.6; continue; }
             light.intensity = Math.max(2, Math.sin(clock.elapsedTime * 5 + u.flickerPhase) * 2.5 + u.baseIntensity * (0.85 + Math.random() * 0.15));
         }
+        if (blackoutK > 0.001) for (const l of flickeringLights) l.intensity *= 1 - 0.97 * blackoutK;
         updateFlashlight();
 
         // Decoraciones giratorias

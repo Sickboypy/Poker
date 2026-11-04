@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Swarm Descent - V11 Optimizado</title>
+    <title>Swarm Descent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --hud-cyan: #36f9f6;
@@ -20,15 +22,36 @@
             text-shadow: 0 0 6px rgba(54, 249, 246, 0.6);
         }
         #crosshair {
-            position: absolute; top: 50%; left: 50%; width: 22px; height: 22px;
+            position: absolute; top: 50%; left: 50%; width: 30px; height: 30px;
             transform: translate(-50%, -50%); pointer-events: none; z-index: 8;
         }
-        #crosshair::before, #crosshair::after {
-            content: ''; position: absolute; background: var(--hud-cyan);
-            box-shadow: 0 0 4px var(--hud-cyan);
+        /* punto central + anillo partido en 4 (toma el color del arma) */
+        #crosshair::before {
+            content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px;
+            transform: translate(-50%, -50%); border-radius: 50%;
+            background: var(--wcol, #36f9f6); box-shadow: 0 0 6px var(--wcol, #36f9f6);
         }
-        #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); clip-path: polygon(0 0, 100% 0, 100% 30%, 0 30%, 0 70%, 100% 70%, 100% 100%, 0 100%); }
-        #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); clip-path: polygon(0 0, 30% 0, 30% 100%, 0 100%, 70% 0, 100% 0, 100% 100%, 70% 100%); }
+        #crosshair::after {
+            content: ''; position: absolute; inset: 0; border-radius: 50%;
+            border: 2px solid var(--wcol, #36f9f6); opacity: 0.75;
+            -webkit-mask: repeating-conic-gradient(from 22.5deg, #000 0 45deg, transparent 45deg 90deg);
+                    mask: repeating-conic-gradient(from 22.5deg, #000 0 45deg, transparent 45deg 90deg);
+        }
+        /* marca de impacto: una X que aparece cuando le pegás a algo */
+        #hitmark {
+            position: absolute; top: 50%; left: 50%; width: 26px; height: 26px; transform: translate(-50%, -50%);
+            pointer-events: none; z-index: 8; opacity: 0;
+        }
+        #hitmark::before, #hitmark::after {
+            content: ''; position: absolute; left: 50%; top: 0; width: 2px; height: 100%; background: #fff;
+            box-shadow: 0 0 5px #fff;
+            -webkit-mask: linear-gradient(#000 0 32%, transparent 32% 68%, #000 68%);
+                    mask: linear-gradient(#000 0 32%, transparent 32% 68%, #000 68%);
+        }
+        #hitmark::before { transform: translateX(-50%) rotate(45deg); }
+        #hitmark::after  { transform: translateX(-50%) rotate(-45deg); }
+        #hitmark.crit { width: 38px; height: 38px; }
+        #hitmark.crit::before, #hitmark.crit::after { background: #ffc15e; box-shadow: 0 0 8px #ffc15e; }
         #instructions { top: 12px; left: 12px; line-height: 1.55; font-size: 14px; }
         #ff-toggle { display: inline-block; margin: 4px 0; padding: 4px 10px; cursor: pointer; color: #ffc15e;
                      border: 1px solid rgba(255, 193, 94, 0.6); border-radius: 4px; font-weight: bold; }
@@ -115,6 +138,39 @@
         #end-screen p { font-size: 18px; margin: 6px 0; color: #aaccdd; }
         #end-screen .restart { margin-top: 24px; color: var(--hud-amber); font-size: 16px; animation: pulse 1.2s infinite; }
         @keyframes pulse { 50% { opacity: 0.35; } }
+
+        /* ============== HUD v2: visor de casco ============== */
+        #weapon-panel, #ammo-panel, #health-container, #health-label, #fuel-container, #fuel-label, #legend { display: none !important; }
+        .hud { background: none; border: none; padding: 0; border-radius: 0;
+               font-family: 'Rajdhani', 'Segoe UI', system-ui, sans-serif; text-shadow: 0 0 8px rgba(54, 249, 246, 0.5); }
+        #instructions { background: rgba(4, 9, 18, 0.9); border: 1px solid rgba(54, 249, 246, 0.35); border-radius: 6px;
+                        padding: 12px 16px; font-family: 'Courier New', monospace; text-shadow: none; z-index: 30; }
+        #legend-in { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 14px; color: #c8d4e6; }
+        #legend-in span::before { content: '●'; margin-right: 5px; color: var(--c); text-shadow: 0 0 6px var(--c); }
+        #swarm-info { top: 22px; left: 28px; right: auto; font-size: 17px; font-weight: 600; letter-spacing: 1px; line-height: 1.3;
+                      padding: 2px 0 2px 12px; border-left: 2px solid rgba(54, 249, 246, 0.75); color: #d8fbff; white-space: pre; }
+        #score-display { top: 16px; right: 28px; font-size: 32px; font-weight: 700; letter-spacing: 3px; text-align: right; }
+        #combo-display { top: 56px; right: 28px; font-size: 22px; font-weight: 700; letter-spacing: 2px; }
+        #fps-info { top: auto; bottom: 8px; right: 14px; font-size: 12px; color: rgba(140, 160, 190, 0.55); text-shadow: none; }
+        #net-status { bottom: 8px; left: 14px; font-size: 13px; color: rgba(160, 196, 214, 0.75); text-shadow: none; }
+        #invert-status { bottom: 30px; left: 14px; font-size: 13px; }
+        #rapid-info { bottom: 214px; left: 50%; right: auto; transform: translateX(-50%); font-size: 17px; font-weight: 700; letter-spacing: 3px; }
+        #coop-msg { font-family: 'Rajdhani', 'Segoe UI', sans-serif !important; letter-spacing: 2px; }
+        #radar { bottom: 26px; border: none; border-radius: 50%;
+                 background: radial-gradient(circle, rgba(6, 16, 30, 0.6) 0%, rgba(6, 16, 30, 0.35) 68%, transparent 71%); }
+        #VRButton { left: auto !important; right: 18px !important; bottom: 30px !important; width: auto !important; padding: 10px 18px !important; }
+        #hud-cluster { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); z-index: 9; pointer-events: none; }
+        #boss-name { font-family: 'Rajdhani', sans-serif; font-size: 19px; }
+        #boss-bar-track { height: 10px; padding: 1px; }
+        .visor { position: absolute; width: 44px; height: 44px; pointer-events: none; z-index: 4; border: 2px solid rgba(54, 249, 246, 0.22); }
+        .visor.tl { top: 10px; left: 10px; border-right: none; border-bottom: none; border-top-left-radius: 10px; }
+        .visor.tr { top: 10px; right: 10px; border-left: none; border-bottom: none; border-top-right-radius: 10px; }
+        .visor.bl { bottom: 10px; left: 10px; border-right: none; border-top: none; border-bottom-left-radius: 10px; }
+        .visor.br { bottom: 10px; right: 10px; border-left: none; border-top: none; border-bottom-right-radius: 10px; }
+        #danger { position: absolute; inset: 0; pointer-events: none; z-index: 4; opacity: 0;
+                  background: radial-gradient(ellipse at center, transparent 52%, rgba(255, 20, 50, 0.6) 100%); }
+        #danger.on { animation: dangerPulse 0.9s ease-in-out infinite; }
+        @keyframes dangerPulse { 50% { filter: brightness(0.45); } }
         #map-select {
             position: absolute; inset: 0; z-index: 50; display: none; flex-direction: column;
             align-items: center; justify-content: center; gap: 22px; padding: 16px; box-sizing: border-box;
@@ -148,6 +204,9 @@
         <div class="sub">Si tu compañero ya está jugando, entrás a su mapa automáticamente.</div>
     </div>
     <div id="crosshair"></div>
+    <div id="hitmark"></div>
+    <div id="danger"></div>
+    <div class="visor tl"></div><div class="visor tr"></div><div class="visor bl"></div><div class="visor br"></div>
     <div id="instructions" class="hud">
         <span id="mission">MISIÓN: Descendé hasta el reactor y destruí a la Reina</span><br>
         Las salas se sellan al entrar · Hay salas opcionales con munición<br>
@@ -171,7 +230,8 @@
         Botón "ENTER VR" abajo · Gatillos: disparar (1 por mano)<br>
         Stick izq: mover · Stick der: girar / subir-bajar<br>
         Grip izq: boost · A/B: cambiar arma<br>
-        Clic del stick izq: fuego amigo (anfitrión)
+        Clic del stick izq: fuego amigo (anfitrión) · Muñeca izq: casco, boost y objetivo
+        <div id="legend-in"><span style="--c:#ff66ff">Grunt</span><span style="--c:#66ddff">Tanque</span><span style="--c:#ffff44">Dron kamikaze</span><span style="--c:#66ff88">Francotirador</span><span style="--c:#ffffff">Sanador (matalo 1°)</span></div>
     </div>
     <div id="invert-status" class="hud">Eje Y del Ratón: Invertido</div>
     <div id="fuel-label">BOOST</div>
@@ -206,6 +266,7 @@
         <div class="row"><span class="dot" style="color:#66ff88;background:#66ff88"></span>Francotirador — lejos</div>
         <div class="row"><span class="dot" style="color:#ffffff;background:#ffffff"></span>Sanador — ¡mátalo 1°!</div>
     </div>
+    <canvas id="hud-cluster" width="600" height="200"></canvas>
     <canvas id="radar" width="150" height="150"></canvas>
     <div id="end-screen">
         <h1 id="end-title">DESTRUIDO</h1>
@@ -246,7 +307,7 @@
     let vrActive = false;             // true cuando hay sesión XR en curso
     let controller1, controller2;     // los dos mandos del Quest
     let controllerGrip1, controllerGrip2;
-    let cockpit = null;               // marco/cabina fija (ancla anti-mareo)
+    let cockpit = null;               // (sin uso: la cabina se reemplazó por armas en las manos)
     let vrHudCanvas = null, vrHudCtx = null, vrHudTexture = null, vrHudMesh = null;
     const SMOOTH_TURN_SPEED = 2.8;    // velocidad máx. de giro (rad/s) a tope de stick
     let snapTurnCooldown = 0;         // (sin uso, conservado por compatibilidad)
@@ -1185,6 +1246,18 @@
     // =====================================================================
     // --- efectos propios del mapa (estado global, ANTES de init) ---
     const roomLights = [], ambientLights = [];
+    // --- HUD v2 y armas visibles ---
+    let deskGun = null;                  // arma de PC (cuelga de la cámara)
+    const handGuns = [null, null];       // armas en las manos (VR)
+    let hudCtx = null;
+    let spawnScaleK = 1;                 // tamaño de nacimiento de la bala (PC: chica, nace cerca de la cámara)
+    let hitMarkT = 0, hitMarkCrit = false, hitMarkCd = 0;
+    let wristCanvas = null, wristCtx = null, wristTex = null;
+    let gunDispCanvas = null, gunDispCtx = null, gunDispTex = null;
+    let vrMsgCanvas = null, vrMsgCtx = null, vrMsgTex = null, vrMsgMesh = null, vrMsgLast = '';
+    let vrEndCanvas = null, vrEndCtx = null, vrEndTex = null, vrEndMesh = null, vrEndDrawn = false;
+    let vrHudNext = 0;
+    const _gTmp = new THREE.Vector3(), _gAim = new THREE.Vector3();
     const gateObjs = [], pylonObjs = [], decorObjs = [];
     let blackoutK = 0, blackoutWas = false;
 
@@ -1263,7 +1336,10 @@
         document.body.appendChild(renderer.domElement);
 
         // Botón "Entrar en VR" (solo aparece si el dispositivo soporta WebXR)
-        document.body.appendChild(VRButton.createButton(renderer));
+        const vrBtn = VRButton.createButton(renderer);
+        document.body.appendChild(vrBtn);
+        // abajo a la derecha: no tapa el radar ni la consola
+        if (vrBtn.style) Object.assign(vrBtn.style, { left: 'auto', right: '18px', bottom: '30px', width: 'auto', padding: '10px 18px' });
         setupVR();
 
         // --- Post-procesado: bloom para que lo emisivo brille de verdad ---
@@ -1327,6 +1403,7 @@
         updateWeaponHUD();
         createRemoteFlashlight();
         createNetTracers();
+        buildGunsAndHud();
         connectNet();
     }
 
@@ -1751,6 +1828,7 @@
 
         let crit = false;
         if (opts.canCrit && Math.random() < CRIT_CHANCE) { dmg *= 2; crit = true; }
+        if (!opts.env && opts.shooter == null) showHitMark(crit, !!opts.continuous);   // solo tus golpes
 
         // Paso 5 — reacción: flash blanco + retroceso + deformación
         ud.flashTimer = opts.continuous ? 0.06 : 0.12;
@@ -1898,7 +1976,8 @@
         const core = orb.userData.core;
         if (level <= 0) { orb.visible = false; core.visible = false; return; }
         const pulse = 1 + Math.sin(clock.elapsedTime * 32) * 0.07 * level;
-        const sz = (0.1 + 0.45 * level) * pulse;           // la bola se hincha en la mano
+        const ks = vrActive ? 1 : 0.28;                      // en PC está pegada a la cámara: más chica
+        const sz = (0.1 + 0.45 * level) * pulse * ks;      // la bola se hincha en la mano
         orb.position.copy(pos);
         orb.scale.set(sz * 2.4, sz * 2.4, 1);
         orb.material.opacity = 0.6 + 0.4 * level;
@@ -1910,7 +1989,7 @@
         const n = 1 + Math.floor(level * 3);
         for (let k = 0; k < n; k++) {
             const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
-            const R = 0.45 + 0.5 * level;
+            const R = (0.45 + 0.5 * level) * ks;
             const dx = Math.sin(ph) * Math.cos(th), dy = Math.cos(ph), dz = Math.sin(ph) * Math.sin(th);
             emitParticle(moteFX, pos.x + dx * R, pos.y + dy * R, pos.z + dz * R,
                 -dx * R / 0.22, -dy * R / 0.22, -dz * R / 0.22,
@@ -1970,9 +2049,9 @@
         // núcleo visible en vuelo (no se achica al 20% como las balas comunes)
         const base = W.bsize / 0.3;
         ud.flyMesh = base * (0.3 + 0.3 * c);
-        ud.birthMesh = ud.flyMesh * 1.8;
+        ud.birthMesh = ud.flyMesh * (spawnScaleK < 1 ? 1 : 1.8);
         ud.flyGlow = W.bsize * 9 * (0.6 + 0.6 * c);
-        ud.birthGlow = ud.flyGlow * 1.6;
+        ud.birthGlow = ud.flyGlow * (spawnScaleK < 1 ? 1 : 1.6);
         b.scale.setScalar(ud.birthMesh);
         ud.glow.scale.set(ud.birthGlow, ud.birthGlow, 1);
         ud.velocity.setLength(W.speed * (0.85 + 0.35 * c));
@@ -4173,11 +4252,11 @@
         b.userData.flyGlow = baseGlow * 0.2;
         // ...pero NACE al 100% (como se ve ahora), simulando el fogonazo, y
         // decae a ese 20% en birthAnim segundos.
-        b.userData.birthMesh = baseMesh;
-        b.userData.birthGlow = baseGlow;
+        b.userData.birthMesh = baseMesh * spawnScaleK;
+        b.userData.birthGlow = baseGlow * spawnScaleK;
         b.userData.birthAnim = 0.15;     // duración del encogimiento (s)
         b.userData.birthTotal = 0.15;
-        b.scale.setScalar(baseMesh);
+        b.scale.setScalar(baseMesh * spawnScaleK);
         b.material.color.setHex(W.color);
         b.userData.glow.material.color.setHex(W.glow);
         b.userData.glow.scale.set(baseGlow, baseGlow, 1);
@@ -4199,9 +4278,24 @@
     // (adelante + por debajo de la línea de visión, para no tapar el centro).
     function getDesktopMuzzle() {
         camera.getWorldDirection(_v1);
-        camera.getWorldPosition(_v2);
-        _shipUp.set(0, 1, 0).applyQuaternion(camera.getWorldQuaternion(_quaternion));
-        _v2.addScaledVector(_v1, 2.0).addScaledVector(_shipUp, -1.6);
+        camera.getWorldPosition(_gTmp);
+        if (deskGun) {
+            // sale de la boca del arma y converge en la mira a 60u
+            deskGun.userData.tip.getWorldPosition(_v2);
+            _gAim.copy(_gTmp).addScaledVector(_v1, 60);
+            _v1.copy(_gAim).sub(_v2).normalize();
+            _v2.addScaledVector(_v1, 0.35);   // justo delante de la boca
+        } else {
+            _shipUp.set(0, 1, 0).applyQuaternion(camera.getWorldQuaternion(_quaternion));
+            _v2.copy(_gTmp).addScaledVector(_v1, 2.0).addScaledVector(_shipUp, -1.6);
+        }
+    }
+
+    // Boca del arma de una mano (VR)
+    function handMuzzle(hand, out) {
+        const g = handGuns[hand], ctrl = hand === 0 ? controller1 : controller2;
+        if (g) return g.userData.tip.getWorldPosition(out);
+        return ctrl.getWorldPosition(out);
     }
 
     function firePlayerWeapon(charge) {
@@ -4213,6 +4307,12 @@
 
         getDesktopMuzzle();
         netShot(_v2, _v1);
+        gunFire(deskGun);
+        spawnScaleK = deskGun ? 0.25 : 1;   // en PC nace al lado de la cámara: chica
+        try { firePlayerWeaponFrom(W, charge); } finally { spawnScaleK = 1; }
+    }
+
+    function firePlayerWeaponFrom(W, charge) {
 
         if (W.kind === 'charge') {
             spawnFireball(W, _v1, _v2, charge || 0.35);
@@ -4383,6 +4483,10 @@
     function updateWeaponHUD() {
         const W = WEAPONS[currentWeapon];
         drawWeaponIcon(W);
+        const css = '#' + W.color.toString(16).padStart(6, '0');
+        if (document.documentElement && document.documentElement.style && document.documentElement.style.setProperty)
+            document.documentElement.style.setProperty('--wcol', css);   // la mira toma el color del arma
+        vrHudNext = 0;                                                    // redibujar la munición en el arma (VR)
         weaponNameElement.textContent = `${currentWeapon + 1}·${W.name}`;
         weaponNameElement.style.color = '#' + W.color.toString(16).padStart(6, '0');
         // Munición
@@ -4424,11 +4528,8 @@
         beamMesh.visible = active;
         if (!active) return;
 
-        camera.getWorldDirection(_v1);
-        camera.getWorldPosition(_v2);
-        // Bajar el origen del haz para que no nazca en el centro de la pantalla
-        _shipUp.set(0, 1, 0).applyQuaternion(camera.getWorldQuaternion(_quaternion));
-        _v2.addScaledVector(_shipUp, -1.4);
+        getDesktopMuzzle();   // el haz sale de la boca del arma
+        gunFire(deskGun, true);
 
         // Buscar el primer enemigo en el cono frontal dentro del alcance
         let bestDist = W.range, bestEnemy = null, bestCh = null, bestIdx = -1;
@@ -5269,7 +5370,7 @@
         player.add(controller1);
         player.add(controller2);
 
-        // Láser de apuntado para cada mano (un haz fino hacia -Z del mando)
+        // Láser de apuntado para cada mano (sale de la boca del arma, hacia -Z del mando)
         const laserGeo = new THREE.CylinderGeometry(0.006, 0.006, 1, 6, 1, true);
         laserGeo.translate(0, 0.5, 0);           // de 0 a 1 en Y
         laserGeo.rotateX(-Math.PI / 2);          // ahora va de 0 a -Z (hacia donde apunta el mando)
@@ -5280,171 +5381,393 @@
             });
             const laser = new THREE.Mesh(laserGeo, mat);
             laser.scale.set(1, 1, 30);           // 30u de largo
+            laser.position.set(0, -0.012, -0.23);  // boca del arma de la mano
             c.add(laser);
             c.userData.laser = laser;
             c.userData.hand = i;                 // 0 = mano 1, 1 = mano 2
-            // pequeña "punta" de cañón para que se vea de dónde sale el tiro
-            const tip = new THREE.Mesh(
-                new THREE.SphereGeometry(0.03, 8, 8),
-                new THREE.MeshBasicMaterial({ color: 0xffffff })
-            );
-            c.add(tip);
         });
 
         // Disparo con el gatillo (evento 'selectstart')
         controller1.addEventListener('selectstart', () => onVRTrigger(0));
         controller2.addEventListener('selectstart', () => onVRTrigger(1));
 
-        // Grips (modelos físicos de los mandos no hacen falta; usamos los láser)
-        buildCockpit();
+        // (sin cabina: las armas y la pantalla de muñeca se arman en buildGunsAndHud,
+        //  cuando ya existe la textura de brillo)
     }
 
-    // Cabina fija: un marco de referencia visual estable alrededor del jugador.
-    // Reduce muchísimo el mareo al dar al cerebro un "interior" inmóvil.
-    function buildCockpit() {
-        cockpit = new THREE.Group();
-        // Estructura metálica con emisivo alto (se ve bien aún sin bloom)
-        const frameMat = new THREE.MeshStandardMaterial({
-            color: 0x3a4868, metalness: 0.8, roughness: 0.35,
-            emissive: 0x1a3050, emissiveIntensity: 1.2
-        });
-        const glowMat = new THREE.MeshBasicMaterial({ color: 0x36f9f6 });
-        const glowAmber = new THREE.MeshBasicMaterial({ color: 0xffc15e });
-
-        // Arco frontal (carlinga) más grueso y bajo, envuelve el campo de visión
-        const archGeo = new THREE.TorusGeometry(0.78, 0.045, 10, 40, Math.PI * 1.2);
-        const arch = new THREE.Mesh(archGeo, frameMat);
-        arch.position.set(0, -0.2, -0.5);
-        arch.rotation.x = Math.PI * 0.5;
-        arch.rotation.z = -Math.PI * 0.1;
-        cockpit.add(arch);
-
-        // Riel neón siguiendo el arco (línea brillante que enmarca la vista)
-        const railGeo = new THREE.TorusGeometry(0.78, 0.012, 8, 40, Math.PI * 1.2);
-        const rail = new THREE.Mesh(railGeo, glowMat);
-        rail.position.copy(arch.position);
-        rail.rotation.copy(arch.rotation);
-        cockpit.add(rail);
-
-        // Montantes laterales más robustos
-        [-0.7, 0.7].forEach(x => {
-            const strut = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.7, 0.06), frameMat);
-            strut.position.set(x, -0.2, -0.42);
-            strut.rotation.x = 0.1;
-            cockpit.add(strut);
-            // tira neón vertical en cada montante
-            const vstrip = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.6, 0.015), glowMat);
-            vstrip.position.set(x * 0.97, -0.2, -0.4);
-            vstrip.rotation.x = 0.1;
-            cockpit.add(vstrip);
-        });
-
-        // Consola inferior más presente
-        const console_ = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.18, 0.5), frameMat);
-        console_.position.set(0, -0.72, -0.55);
-        console_.rotation.x = -0.35;
-        cockpit.add(console_);
-        // dos tiras neón en la consola (una cian, una ámbar)
-        const strip1 = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.018, 0.025), glowMat);
-        strip1.position.set(0, -0.63, -0.38); strip1.rotation.x = -0.35;
-        cockpit.add(strip1);
-        const strip2 = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.012, 0.02), glowAmber);
-        strip2.position.set(0, -0.66, -0.36); strip2.rotation.x = -0.35;
-        cockpit.add(strip2);
-
-        // La cabina cuelga de la cámara para que siga la cabeza con estabilidad
-        // (en VR conviene anclarla a la cabeza, no al mundo)
-        camera.add(cockpit);
-
-        // --- Panel HUD en el mundo (los <div> HTML no se ven en VR) ---
-        // Un canvas con arma/munición/casco/boost, montado en la consola.
-        vrHudCanvas = document.createElement('canvas');
-        vrHudCanvas.width = 512; vrHudCanvas.height = 256;
-        vrHudCtx = vrHudCanvas.getContext('2d');
-        vrHudTexture = new THREE.CanvasTexture(vrHudCanvas);
-        const hudMat = new THREE.MeshBasicMaterial({
-            map: vrHudTexture, transparent: true, depthWrite: false,
-            blending: THREE.AdditiveBlending
-        });
-        vrHudMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.39, 0.195), hudMat);
-        // Más cerca (al ser chico) y abajo, como un instrumento de consola
-        vrHudMesh.position.set(0, -0.42, -0.85);
-        vrHudMesh.rotation.x = -0.5;
-        cockpit.add(vrHudMesh);
-        drawVRHud();
+    // =====================================================================
+    //  ARMAS VISIBLES + HUD
+    //  PC: un arma abajo al centro (de ahí sale el disparo) y una consola
+    //  alrededor del radar. VR: un arma en cada mano con la munición
+    //  proyectada encima, una pantalla en la muñeca izquierda y una línea de
+    //  mensajes que solo aparece cuando hay algo importante. Sin cabina.
+    // =====================================================================
+    function makeGun() {
+        const g = new THREE.Group();
+        const dark = new THREE.MeshStandardMaterial({ color: 0x1a2130, metalness: 0.75, roughness: 0.38 });
+        const mid = new THREE.MeshStandardMaterial({ color: 0x2b3850, metalness: 0.6, roughness: 0.42 });
+        const glow = new THREE.MeshBasicMaterial({ color: 0xffee55 });
+        const edgeMat = new THREE.LineBasicMaterial({ color: 0x3fb8c8, transparent: true, opacity: 0.7 });
+        const parts = [];
+        const add = (geo, mat, x, y, z, rx = 0) => {
+            const m = new THREE.Mesh(geo, mat);
+            m.position.set(x, y, z); m.rotation.x = rx;
+            g.add(m); parts.push(m);
+            return m;
+        };
+        // bordes neón como el mapa: el arma se lee aunque esté a oscuras
+        const edged = m => { const l = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 30), edgeMat); m.add(l); parts.push(l); return m; };
+        edged(add(new THREE.BoxGeometry(0.16, 0.11, 0.42), dark, 0, 0, -0.2));                     // cuerpo
+        edged(add(new THREE.BoxGeometry(0.21, 0.05, 0.15), mid, 0, -0.025, -0.33));                // aletas
+        edged(add(new THREE.BoxGeometry(0.11, 0.05, 0.36), mid, 0, 0.075, -0.22));                 // lomo
+        edged(add(new THREE.CylinderGeometry(0.034, 0.044, 0.56, 10), dark, 0, 0.01, -0.68, Math.PI / 2)); // cañón
+        for (const z of [-0.5, -0.62, -0.74]) add(new THREE.CylinderGeometry(0.05, 0.05, 0.022, 14), glow, 0, 0.01, z, Math.PI / 2);   // anillos de energía
+        add(new THREE.BoxGeometry(0.045, 0.018, 0.12), glow, 0, 0.104, -0.13);                      // núcleo
+        const tip = new THREE.Object3D();
+        tip.position.set(0, 0.01, -0.97);
+        g.add(tip);
+        const flash = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: glowTexture, color: 0xffee55, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0
+        }));
+        flash.position.copy(tip.position);
+        flash.scale.set(0.55, 0.55, 1);
+        g.add(flash);
+        g.userData = { tip, glow, edgeMat, flash, parts, kick: 0, flashT: 0, base: new THREE.Vector3(), baseRx: 0 };
+        return g;
     }
 
-    // Dibuja el HUD de VR en su canvas (arma, munición, casco, boost)
-    function drawVRHud() {
-        if (!vrHudCtx) return;
-        const ctx = vrHudCtx, W = WEAPONS[currentWeapon];
-        ctx.clearRect(0, 0, 512, 256);
+    function buildGunsAndHud() {
+        // --- PC ---
+        deskGun = makeGun();
+        // abajo a la derecha, apenas girada hacia la mira (no tapa el centro)
+        deskGun.scale.setScalar(0.7);
+        deskGun.position.set(0.36, -0.27, -0.5);
+        deskGun.rotation.set(0.03, 0.1, -0.06);
+        deskGun.userData.flash.scale.set(0.3, 0.3, 1);
+        deskGun.userData.base.copy(deskGun.position);
+        deskGun.userData.baseRx = deskGun.rotation.x;
+        // se dibuja encima de todo: no se mete adentro de las paredes al pegarte a una
+        deskGun.userData.parts.forEach((m, i) => { m.material.depthTest = false; m.renderOrder = 60 + i; });
+        deskGun.userData.flash.material.depthTest = false;
+        deskGun.userData.flash.renderOrder = 80;
+        camera.add(deskGun);
+        const hc = document.getElementById('hud-cluster');
+        if (hc && hc.getContext) hudCtx = hc.getContext('2d');
 
-        // Fondo translúcido con borde neón
-        ctx.fillStyle = 'rgba(5,12,22,0.85)';
-        ctx.strokeStyle = 'rgba(54,249,246,0.5)'; ctx.lineWidth = 3;
-        roundRect(ctx, 6, 6, 500, 244, 14); ctx.fill(); ctx.stroke();
+        // --- VR: munición proyectada en el arma (una textura para las dos) ---
+        gunDispCanvas = document.createElement('canvas');
+        gunDispCanvas.width = 256; gunDispCanvas.height = 128;
+        gunDispCtx = gunDispCanvas.getContext('2d');
+        gunDispTex = new THREE.CanvasTexture(gunDispCanvas);
+        const dispMat = new THREE.MeshBasicMaterial({ map: gunDispTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+        [controller1, controller2].forEach((c, i) => {
+            if (!c) return;
+            const g = makeGun();
+            g.scale.setScalar(0.3);
+            g.position.set(0, -0.015, 0.06);
+            g.userData.base.copy(g.position);
+            const disp = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.14), dispMat);
+            disp.position.set(0, 0.2, -0.04);
+            disp.rotation.x = -0.85;            // mira hacia arriba y atrás: hacia tus ojos
+            g.add(disp);
+            c.add(g);
+            handGuns[i] = g;
+        });
 
-        // --- Pantalla de fin de juego (victoria/derrota) ---
-        if (gameOver || victory) {
-            const col = victory ? '#44ff88' : '#ff5470';
-            ctx.textAlign = 'center';
-            ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 16;
-            ctx.font = 'bold 44px "Courier New", monospace';
-            ctx.textBaseline = 'top';
-            ctx.fillText(victory ? 'SECTOR LIMPIO' : 'DESTRUIDO', 256, 30);
+        // --- VR: pantalla de muñeca (mano izquierda / mando 1) ---
+        wristCanvas = document.createElement('canvas');
+        wristCanvas.width = 512; wristCanvas.height = 300;
+        wristCtx = wristCanvas.getContext('2d');
+        wristTex = new THREE.CanvasTexture(wristCanvas);
+        const wrist = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 0.088), new THREE.MeshBasicMaterial({
+            map: wristTex, transparent: true, depthWrite: false, side: THREE.DoubleSide
+        }));
+        wrist.position.set(0, 0.05, 0.12);
+        wrist.rotation.x = -1.0;
+        if (controller1) controller1.add(wrist);
+
+        // --- VR: línea de mensajes (solo cuando hay algo que decir) y fin de partida ---
+        vrMsgCanvas = document.createElement('canvas');
+        vrMsgCanvas.width = 1024; vrMsgCanvas.height = 128;
+        vrMsgCtx = vrMsgCanvas.getContext('2d');
+        vrMsgTex = new THREE.CanvasTexture(vrMsgCanvas);
+        vrMsgMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.055), new THREE.MeshBasicMaterial({
+            map: vrMsgTex, transparent: true, depthWrite: false, depthTest: false
+        }));
+        vrMsgMesh.position.set(0, -0.2, -0.85);
+        vrMsgMesh.rotation.x = -0.22;
+        vrMsgMesh.renderOrder = 40;
+        vrMsgMesh.visible = false;
+        camera.add(vrMsgMesh);
+        vrEndCanvas = document.createElement('canvas');
+        vrEndCanvas.width = 512; vrEndCanvas.height = 256;
+        vrEndCtx = vrEndCanvas.getContext('2d');
+        vrEndTex = new THREE.CanvasTexture(vrEndCanvas);
+        vrEndMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.3), new THREE.MeshBasicMaterial({
+            map: vrEndTex, transparent: true, depthWrite: false, depthTest: false
+        }));
+        vrEndMesh.position.set(0, 0, -1.2);
+        vrEndMesh.renderOrder = 41;
+        vrEndMesh.visible = false;
+        camera.add(vrEndMesh);
+        updateWeaponHUD();
+    }
+
+    // Disparo: retroceso + fogonazo (continuous: haz de plasma, titila)
+    function gunFire(g, continuous) {
+        if (!g) return;
+        const u = g.userData;
+        if (continuous) { u.kick = Math.max(u.kick, 0.25 + Math.random() * 0.15); u.flashT = 0.05; }
+        else { u.kick = 1; u.flashT = 0.07; }
+    }
+
+    function updateGuns(dt) {
+        const W = WEAPONS[currentWeapon];
+        const low = W.ammoMax !== Infinity && ammo[currentWeapon] <= 0;
+        const allGuns = [deskGun, handGuns[0], handGuns[1]];
+        for (const g of allGuns) {
+            if (!g) continue;
+            const u = g.userData;
+            u.glow.color.setHex(low ? 0x3a3f48 : W.color);
+            u.edgeMat.color.setHex(low ? 0x5a2a30 : 0x3fb8c8);
+            u.flash.material.color.setHex(W.color);
+            u.kick *= Math.exp(-dt * 16);
+            if (u.flashT > 0) u.flashT -= dt;
+            u.flash.material.opacity = Math.max(0, u.flashT / 0.07);
+            const fs = (g === deskGun ? 0.22 : 0.45) + (g === deskGun ? 0.14 : 0.35) * Math.random();
+            u.flash.scale.set(fs, fs, 1);
+            if (g === deskGun) {
+                g.position.copy(u.base);
+                g.position.z += u.kick * 0.07;            // retrocede
+                g.position.y -= u.kick * 0.015;
+                g.rotation.x = u.baseRx + u.kick * 0.08;  // y levanta la boca
+                // al cargar el Incinerador, el arma tiembla
+                if (chargeState[0].on) { g.position.x += (Math.random() - 0.5) * 0.008 * chargeState[0].c; g.position.y += (Math.random() - 0.5) * 0.008 * chargeState[0].c; }
+            } else {
+                g.position.copy(u.base);
+                g.position.z += u.kick * 0.02;
+                g.rotation.x = u.kick * 0.18;
+            }
+        }
+        if (deskGun) deskGun.visible = !vrActive && !gameOver && !victory;
+        if (controller1) controller1.visible = vrActive;
+        if (controller2) controller2.visible = vrActive;
+    }
+
+    // --- Marca de impacto en la mira (PC) ---
+    function showHitMark(crit, continuous) {
+        if (continuous) { if (hitMarkCd > 0) return; hitMarkCd = 0.12; }
+        hitMarkT = crit ? 0.22 : 0.13;
+        hitMarkCrit = crit;
+    }
+
+    function updateHitMark(dt) {
+        if (hitMarkCd > 0) hitMarkCd -= dt;
+        const el = document.getElementById('hitmark');
+        if (el) {
+            if (hitMarkT > 0) hitMarkT -= dt;
+            el.style.opacity = hitMarkT > 0 ? String(Math.min(1, hitMarkT / 0.08)) : '0';
+            if (el.classList) el.classList.toggle('crit', hitMarkCrit && hitMarkT > 0);
+        }
+        const dz = document.getElementById('danger');
+        if (dz) {
+            const crit = !gameOver && !victory && (downed || playerHealth < maxHealth * 0.35);
+            dz.style.opacity = crit ? String(downed ? 0.9 : 0.35 + 0.65 * (1 - playerHealth / (maxHealth * 0.35))) : '0';
+            if (dz.classList) dz.classList.toggle('on', crit);
+        }
+    }
+
+    // --- Consola de PC alrededor del radar ---
+    const HUD_FONT = "'Rajdhani', 'Segoe UI', system-ui, sans-serif";
+    function hexCss(c) { return '#' + c.toString(16).padStart(6, '0'); }
+
+    function hudArc(ctx, cx, cy, r, a0, a1, frac, ccw, c1, c2) {
+        ctx.lineCap = 'round';
+        ctx.lineWidth = 7;
+        ctx.strokeStyle = 'rgba(120, 160, 190, 0.16)';
+        ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1, ccw); ctx.stroke();
+        frac = Math.max(0, Math.min(1, frac));
+        if (frac > 0.002) {
+            const a = a0 + (a1 - a0) * frac;
+            const grad = ctx.createLinearGradient(cx, cy + r, cx, cy - r);
+            grad.addColorStop(0, c1); grad.addColorStop(1, c2);
+            ctx.strokeStyle = grad;
+            ctx.shadowColor = c2; ctx.shadowBlur = 10;
+            ctx.beginPath(); ctx.arc(cx, cy, r, a0, a, ccw); ctx.stroke();
             ctx.shadowBlur = 0;
-            ctx.fillStyle = '#aaccdd'; ctx.font = '24px "Courier New", monospace';
-            ctx.fillText(`Score: ${score}`, 256, 100);
-            ctx.fillText(`Bajas: ${kills}`, 256, 134);
-            ctx.fillStyle = '#ffc15e'; ctx.font = 'bold 22px "Courier New", monospace';
-            ctx.fillText('Gatillo para reiniciar', 256, 188);
-            ctx.textAlign = 'left';
-            vrHudTexture.needsUpdate = true;
-            return;
         }
+        // marcas cada 25%
+        ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(5, 10, 20, 0.9)';
+        for (let k = 1; k < 4; k++) {
+            const a = a0 + (a1 - a0) * k / 4;
+            ctx.beginPath();
+            ctx.moveTo(cx + Math.cos(a) * (r - 5), cy + Math.sin(a) * (r - 5));
+            ctx.lineTo(cx + Math.cos(a) * (r + 5), cy + Math.sin(a) * (r + 5));
+            ctx.stroke();
+        }
+    }
 
-        const wcol = '#' + W.color.toString(16).padStart(6, '0');
+    function drawHudCluster() {
+        const ctx = hudCtx;
+        if (!ctx || !ctx.clearRect) return;
+        const Wc = 600, H = 200, cx = 300, cy = 99, W = WEAPONS[currentWeapon];
+        ctx.clearRect(0, 0, Wc, H);
+        const hp = Math.max(0, playerHealth / maxHealth), fuel = Math.max(0, currentFuel / maxFuel);
+        const D = Math.PI / 180;
+        // arcos: casco a la izquierda (sube desde abajo), boost a la derecha
+        const hpLow = hp < 0.35;
+        const blink = hpLow && Math.sin(clock.elapsedTime * 10) > 0;
+        hudArc(ctx, cx, cy, 90, 125 * D, 235 * D, hp, false, '#ff3050', blink ? '#ffffff' : '#ff9e7d');
+        hudArc(ctx, cx, cy, 90, 55 * D, -55 * D, fuel, true, '#2563eb', '#36f9f6');
+        ctx.font = `700 13px ${HUD_FONT}`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = hpLow ? '#ff5470' : 'rgba(255, 158, 125, 0.85)';
+        ctx.fillText('CASCO', cx - 74, cy - 82);
+        ctx.fillStyle = 'rgba(54, 249, 246, 0.85)';
+        ctx.fillText('BOOST', cx + 74, cy - 82);
+        ctx.font = `700 20px ${HUD_FONT}`;
+        ctx.fillStyle = hpLow ? '#ff5470' : '#ffd0c0';
+        ctx.fillText(String(Math.ceil(playerHealth)), cx - 104, cy + 84);
 
-        // Arma (nombre grande)
-        ctx.fillStyle = wcol; ctx.shadowColor = wcol; ctx.shadowBlur = 12;
-        ctx.font = 'bold 38px "Courier New", monospace';
-        ctx.textBaseline = 'top';
-        ctx.fillText(`${currentWeapon + 1}·${W.name}`, 28, 24);
+        // bloque izquierdo: arma (ícono, nombre y las 9 ranuras)
+        const wc = hexCss(W.color);
+        ctx.globalAlpha = 0.95;
+        try { ctx.drawImage(weaponIconCanvas, 112 - 36, 30, 72, 72); } catch (e) {}
+        ctx.globalAlpha = 1;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = wc; ctx.shadowColor = wc; ctx.shadowBlur = 10;
+        ctx.font = `700 20px ${HUD_FONT}`;
+        ctx.fillText(`${currentWeapon + 1} · ${W.name}`, 112, 122);
         ctx.shadowBlur = 0;
-
-        // Munición
-        ctx.font = 'bold 30px "Courier New", monospace';
-        const ammoTxt = W.ammoMax === Infinity ? '∞' : Math.ceil(ammo[currentWeapon]);
-        let ammoCol = '#36f9f6';
-        if (W.ammoMax !== Infinity) {
-            if (ammo[currentWeapon] <= 0) ammoCol = '#666';
-            else if (ammo[currentWeapon] <= W.ammoMax * 0.25) ammoCol = '#ff5470';
-        }
-        ctx.fillStyle = '#8fb6c8'; ctx.font = '22px "Courier New", monospace';
-        ctx.fillText('MUNICIÓN', 28, 74);
-        ctx.fillStyle = ammoCol; ctx.font = 'bold 40px "Courier New", monospace';
-        ctx.fillText(String(ammoTxt), 220, 66);
-        if (net && net.connected && net.id != null) {   // estado de red (compacto)
-            ctx.fillStyle = '#' + playerColor(net.id).toString(16).padStart(6, '0');
-            ctx.font = 'bold 20px "Courier New", monospace';
-            ctx.textAlign = 'right';
-            ctx.fillText(`${net.host ? '★' : ''}J${net.id} · ${net.n}P${netFF ? ' · FF' : ''}`, 488, 80);
-            ctx.textAlign = 'left';
-        }
-        if (coopMsg) {   // caído / revivir / traslado
-            ctx.fillStyle = coopMsgCol; ctx.font = 'bold 18px "Courier New", monospace';
-            ctx.fillText(coopMsg.slice(0, 42), 28, 108);
+        const n = WEAPONS.length, pw = 13, gap = 5, x0 = 112 - (n * pw + (n - 1) * gap) / 2;
+        for (let i = 0; i < n; i++) {
+            const Wi = WEAPONS[i], has = Wi.ammoMax === Infinity || ammo[i] > 0, cur = i === currentWeapon;
+            ctx.fillStyle = cur ? wc : (has ? 'rgba(160, 200, 220, 0.45)' : 'rgba(255, 84, 112, 0.35)');
+            const h = cur ? 9 : 5;
+            ctx.fillRect(x0 + i * (pw + gap), 140 - h / 2, pw, h);
         }
 
-        // Barra de CASCO (salud)
-        drawHudBar(ctx, 28, 134, 456, 26, playerHealth / maxHealth,
-                   '#ff5470', '#ff9e7d', 'CASCO');
-        // Barra de BOOST (fuel)
-        drawHudBar(ctx, 28, 188, 456, 26, currentFuel / maxFuel,
-                   '#2563eb', '#36f9f6', 'BOOST');
+        // bloque derecho: munición
+        const inf = W.ammoMax === Infinity, a = inf ? 0 : Math.ceil(ammo[currentWeapon]);
+        const empty = !inf && a <= 0, lowA = !inf && a > 0 && a <= W.ammoMax * 0.25;
+        ctx.textAlign = 'center';
+        ctx.font = `700 ${inf ? 58 : 52}px ${HUD_FONT}`;
+        ctx.fillStyle = empty ? (Math.sin(clock.elapsedTime * 8) > 0 ? '#ff5470' : '#555') : (lowA ? '#ff5470' : wc);
+        ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 14;
+        ctx.fillText(inf ? '∞' : String(a), 488, 92);
+        ctx.shadowBlur = 0;
+        ctx.font = `600 13px ${HUD_FONT}`;
+        ctx.fillStyle = 'rgba(160, 200, 220, 0.75)';
+        ctx.fillText(empty ? 'SIN MUNICIÓN' : 'MUNICIÓN', 488, 114);
+        if (!inf) {
+            ctx.fillStyle = 'rgba(120, 160, 190, 0.18)';
+            ctx.fillRect(430, 126, 116, 4);
+            ctx.fillStyle = lowA || empty ? '#ff5470' : wc;
+            ctx.fillRect(430, 126, 116 * Math.max(0, Math.min(1, ammo[currentWeapon] / W.ammoMax)), 4);
+        }
+    }
 
-        vrHudTexture.needsUpdate = true;
+    // --- HUD de VR: muñeca, munición en el arma, mensajes y fin ---
+    function drawVRHud() {
+        if (!wristCtx) return;
+        const now = clock.elapsedTime;
+        // línea de mensajes: solo cuando cambia
+        const msg = (gameOver || victory) ? '' : coopMsg;
+        if (msg !== vrMsgLast) {
+            vrMsgLast = msg;
+            const c = vrMsgCtx;
+            c.clearRect(0, 0, 1024, 128);
+            if (msg) {
+                c.fillStyle = 'rgba(4, 9, 18, 0.78)';
+                roundRect(c, 40, 22, 944, 84, 40); c.fill();
+                c.font = `700 52px ${HUD_FONT}`;
+                c.textAlign = 'center'; c.textBaseline = 'middle';
+                c.fillStyle = coopMsgCol; c.shadowColor = coopMsgCol; c.shadowBlur = 14;
+                c.fillText(msg.slice(0, 48), 512, 66);
+                c.shadowBlur = 0;
+            }
+            vrMsgTex.needsUpdate = true;
+        }
+        vrMsgMesh.visible = !!msg;
+        // fin de partida
+        const ended = gameOver || victory;
+        vrEndMesh.visible = ended;
+        if (ended && !vrEndDrawn) {
+            vrEndDrawn = true;
+            const c = vrEndCtx, col = victory ? '#44ff88' : '#ff5470';
+            c.clearRect(0, 0, 512, 256);
+            c.fillStyle = 'rgba(4, 9, 18, 0.88)';
+            roundRect(c, 6, 6, 500, 244, 18); c.fill();
+            c.textAlign = 'center'; c.textBaseline = 'top';
+            c.fillStyle = col; c.shadowColor = col; c.shadowBlur = 16;
+            c.font = `700 54px ${HUD_FONT}`;
+            c.fillText(victory ? 'SECTOR LIMPIO' : 'DESTRUIDO', 256, 26);
+            c.shadowBlur = 0;
+            c.fillStyle = '#aaccdd'; c.font = `600 28px ${HUD_FONT}`;
+            c.fillText(`Score ${score}  ·  Bajas ${kills}`, 256, 104);
+            c.fillStyle = '#ffc15e'; c.font = `700 26px ${HUD_FONT}`;
+            c.fillText('Gatillo para reiniciar', 256, 180);
+            vrEndTex.needsUpdate = true;
+        }
+        if (!ended) vrEndDrawn = false;
+        // muñeca y munición: 10 veces por segundo
+        if (now < vrHudNext) return;
+        vrHudNext = now + 0.1;
+        drawWrist();
+        drawGunDisplay();
+    }
+
+    function drawGunDisplay() {
+        const c = gunDispCtx, W = WEAPONS[currentWeapon], wc = hexCss(W.color);
+        c.clearRect(0, 0, 256, 128);
+        const inf = W.ammoMax === Infinity, a = inf ? 0 : Math.ceil(ammo[currentWeapon]);
+        const empty = !inf && a <= 0, lowA = !inf && a > 0 && a <= W.ammoMax * 0.25;
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.font = `700 28px ${HUD_FONT}`;
+        c.fillStyle = wc;
+        c.fillText(W.name, 128, 24);
+        c.font = `700 ${inf ? 84 : 76}px ${HUD_FONT}`;
+        c.fillStyle = empty ? '#ff5470' : (lowA ? '#ff7a8e' : wc);
+        c.shadowColor = c.fillStyle; c.shadowBlur = 12;
+        c.fillText(inf ? '∞' : (empty ? 'VACÍA' : String(a)), 128, 84);
+        c.shadowBlur = 0;
+        gunDispTex.needsUpdate = true;
+    }
+
+    function drawWrist() {
+        const c = wristCtx;
+        c.clearRect(0, 0, 512, 300);
+        c.fillStyle = 'rgba(4, 10, 20, 0.86)';
+        c.strokeStyle = 'rgba(54, 249, 246, 0.55)'; c.lineWidth = 3;
+        roundRect(c, 4, 4, 504, 292, 22); c.fill(); c.stroke();
+        c.textBaseline = 'top'; c.textAlign = 'left';
+        // objetivo (primera línea del HUD de PC) + estado de red
+        const obj = (swarmInfoElement.textContent || '').split('\n')[0].replace(/^▶\s*/, '');
+        c.font = `700 28px ${HUD_FONT}`;
+        c.fillStyle = '#d8fbff';
+        c.fillText(obj.slice(0, 30), 24, 18);
+        const sub = (swarmInfoElement.textContent || '').split('\n')[1] || '';
+        c.font = `600 22px ${HUD_FONT}`;
+        c.fillStyle = 'rgba(160, 200, 220, 0.8)';
+        c.fillText(sub.slice(0, 40), 24, 52);
+        // barras grandes
+        drawHudBar(c, 24, 92, 464, 30, playerHealth / maxHealth, '#ff3050', '#ff9e7d', `CASCO ${Math.ceil(playerHealth)}`);
+        drawHudBar(c, 24, 136, 464, 30, currentFuel / maxFuel, '#2563eb', '#36f9f6', 'BOOST');
+        let y = 184;
+        if (boss && bossActive) {
+            drawHudBar(c, 24, y, 464, 22, bossState.hp / BOSS_MAX_HP, bossState.shield ? '#5a6a80' : '#ff2040', bossState.shield ? '#8aa0c0' : '#ffd040',
+                       bossState.shield ? 'REINA · ESCUDO' : 'REINA · ¡ATACÁ!');
+            y += 34;
+        }
+        c.font = `700 24px ${HUD_FONT}`;
+        c.fillStyle = '#ffc15e';
+        c.fillText(`SCORE ${score}${comboCount > 1 ? '  ×' + comboCount : ''}`, 24, Math.max(y, 222) + 8);
+        if (net && net.connected && net.id != null) {
+            c.textAlign = 'right';
+            c.fillStyle = hexCss(playerColor(net.id));
+            c.fillText(`${net.host ? '★' : ''}J${net.id} · ${net.n}P${netFF ? ' · FF' : ''}`, 488, Math.max(y, 222) + 8);
+        }
+        wristTex.needsUpdate = true;
     }
 
     function drawHudBar(ctx, x, y, w, h, frac, c1, c2, label) {
@@ -5486,8 +5809,8 @@
         const ctrl = hand === 0 ? controller1 : controller2;
         if (!ctrl) return;
         const W = WEAPONS[currentWeapon];
-        // Origen y dirección mundiales del mando
-        ctrl.getWorldPosition(_ctrlPos);
+        // Origen (boca del arma) y dirección mundiales del mando
+        handMuzzle(hand, _ctrlPos);
         ctrl.getWorldQuaternion(_tmpQuat);
         _ctrlDir.set(0, 0, -1).applyQuaternion(_tmpQuat).normalize();
 
@@ -5497,6 +5820,7 @@
         }
         if (!consumeAmmo(currentWeapon, 1)) { sfxEmpty(); return; }
         haptic(hand, W.kind === 'charge' ? 0.6 : 0.3, W.kind === 'charge' ? 70 : 30);   // retroceso en la mano
+        gunFire(handGuns[hand]);
         netShot(_ctrlPos, _ctrlDir);
 
         if (W.kind === 'charge') {
@@ -5664,7 +5988,7 @@
                     cs.on = true; cs.c = 0;
                 }
                 cs.c = Math.min(1, cs.c + deltaTime / W.chargeTime);
-                ctrl.getWorldPosition(_ctrlPos);
+                handMuzzle(hand, _ctrlPos);
                 updateChargeVisual(hand, _ctrlPos, cs.c);
                 setChargeHum(chargeHumLevel());
                 haptic(hand, 0.05 + 0.25 * cs.c, 20);   // la carga se siente en la mano
@@ -5679,7 +6003,7 @@
         if (chargeState[hand].on) cancelCharge(hand);   // cambió de arma a mitad de carga
         // Beam: mientras el gatillo esté apretado, dispara el haz desde la mano
         if (W.kind === 'beam') {
-            if (trigger > 0.5 && ctrl) updateBeamFromHand(ctrl, deltaTime);
+            if (trigger > 0.5 && ctrl) { updateBeamFromHand(ctrl, deltaTime); gunFire(handGuns[hand], true); }
             else if (hand === 1 && beamMesh) beamMesh.visible = false;
             return;
         }
@@ -5696,7 +6020,7 @@
         if (ammo[currentWeapon] <= 0) { sfxEmpty(); if (beamMesh) beamMesh.visible = false; return; }
         ammo[currentWeapon] = Math.max(0, ammo[currentWeapon] - W.beamCost * deltaTime);
         updateWeaponHUD();
-        ctrl.getWorldPosition(_ctrlPos);
+        handMuzzle(ctrl === controller1 ? 0 : 1, _ctrlPos);
         ctrl.getWorldQuaternion(_tmpQuat);
         _ctrlDir.set(0, 0, -1).applyQuaternion(_tmpQuat).normalize();
 
@@ -5869,6 +6193,9 @@
             comboDisplayElement.style.display = 'none';
         }
         drawRadar();
+        drawHudCluster();
+        updateGuns(deltaTime);
+        updateHitMark(deltaTime);
         if (vrActive) drawVRHud();
 
         // FPS
